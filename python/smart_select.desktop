@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=smart_select
+X-Python-2-Compatible=false
+X-Krita-Manual=Manual.html
+Name=Smart Select
+Comment=Native canvas smart segment selection spike
+

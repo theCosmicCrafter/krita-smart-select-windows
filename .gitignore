@@ -1,1 +1,32 @@
 .idea
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Local build/package output
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+install_manifest.txt
+dist/
+*.so
+*.o
+*.a
+
+# Local runtime/test artifacts
+test.tif
+*.npy
+*.npz
+*.log
+
+# Virtualenv/tool caches
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/

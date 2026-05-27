@@ -28,13 +28,26 @@ canvas Krita, видит интерактивную подсветку канд�
 
 Главное взаимодействие должно происходить поверх настоящего canvas Krita:
 
-1. Пользователь активирует Smart Select.
-2. Плагин подготавливает данные сегментации для активного документа/слоя.
-3. При движении курсора над canvas подсвечивается сегмент-кандидат под
-   указателем.
-4. Клик применяет подсвеченный сегмент как выделение Krita.
-5. Клавиши-модификаторы могут поддерживать режимы добавления, вычитания,
+1. Пользователь активирует Smart Select tool.
+2. Плагин проверяет кэш сегментов для текущего изображения.
+3. Если валидного кэша нет, плагин запускает подготовку сегментов для всего
+   изображения.
+4. Пока сегменты готовятся, Krita остаётся отзывчивой, а tool показывает
+   progress/loader прямо в canvas/tool options.
+5. Когда сегменты готовы, при движении курсора над canvas подсвечивается
+   сегмент-кандидат под указателем.
+6. Клик применяет подсвеченный сегмент как выделение Krita.
+7. Клавиши-модификаторы могут поддерживать режимы добавления, вычитания,
    пересечения или переключения сегмента в выделении.
+
+Первая версия работает как **prepared segmentation tool**: сначала строится набор
+сегментов, затем пользователь выбирает уже готовые сегменты мышью. Prompt-based
+selection по клику/box и выбор на основании активного выделения не входят в MVP.
+
+Отдельная команда "Generate all masks for image/layer" в MVP не нужна:
+генерация сегментов запускается автоматически при активации Smart Select, если
+для текущего изображения нет валидного кэша. Позже можно добавить явную команду
+"Refresh segments" / "Rebuild smart select cache" для ручного пересчёта.
 
 Создание нового слоя из сегмента полезно, но не должно быть основным режимом.
 Это может быть дополнительной командой, например "Extract selection to new
@@ -63,6 +76,24 @@ SAM2 уже подходит для использования в Krita, а фо
 
 Точный список нужно проверить по официальному состоянию релизов SAM2/SAM2.1 на
 момент реализации.
+
+### Начальный Hardware Profile
+
+Hardware profile в `ModelRegistry` должен быть консервативной подсказкой для
+пользователя и support flow, а не строгим запретом запуска.
+
+Ориентировочные значения для MVP:
+
+- SAM2/SAM2.1 Hiera Tiny: RAM 8 GB, VRAM 0-4 GB, быстрый/default вариант для
+  CPU или слабого GPU.
+- SAM2/SAM2.1 Hiera Small: RAM 8-16 GB, VRAM 4 GB, хороший default для GPU.
+- SAM2/SAM2.1 Hiera Base Plus: RAM 16 GB, VRAM 6-8 GB, quality/performance
+  вариант.
+- SAM2/SAM2.1 Hiera Large: RAM 16-32 GB, VRAM 8-12 GB, quality/slow вариант.
+
+Automatic mask generation для Base Plus и Large нужно помечать как тяжёлую
+операцию. UI может предупреждать пользователя, если изображение большое или
+выбранная модель явно не соответствует доступной памяти.
 
 ### Решение По SAM 3
 
@@ -130,6 +161,23 @@ ModelSpec(
 - Показывать понятные состояния загрузки, проверки и ошибки.
 - Никогда не замораживать Krita во время загрузки.
 
+## Packaging И Target Krita
+
+MVP таргетирует конкретную версию Krita, а не широкий диапазон версий.
+
+Это решение принято из-за C++/hybrid canvas tool слоя: нативный tool использует
+внутренние API Krita, и совместимость между версиями нужно проверять явно.
+
+Начальный packaging может следовать подходу Krita Vision Tools:
+
+- C++ часть собирается как native library/module под выбранную версию Krita.
+- Python extension может выступать loader-обёрткой, которая подгружает native
+  library и регистрирует tool внутри Krita.
+- Release artifact должен явно указывать поддерживаемую версию Krita и платформу.
+
+Поддержка нескольких версий Krita и кросс-версионная binary compatibility не
+являются целью первого MVP.
+
 ## Runtime-Архитектура
 
 Inference не должен блокировать UI Krita.
@@ -142,13 +190,163 @@ Inference не должен блокировать UI Krita.
   - загрузки/выгрузки модели
   - установки изображения
   - генерации automatic masks
-  - генерации prompted masks
   - отправки progress
   - cancellation
   - ошибок
 
 Worker-процесс предпочтительнее in-process inference, потому что сбои PyTorch,
 CUDA и модельного кода не должны крашить или замораживать Krita.
+
+Prompted masks можно добавить в будущем, но MVP не должен зависеть от prompt
+selection. Основной inference job первой версии - automatic segmentation всего
+текущего изображения при активации Smart Select.
+
+### IPC Между C++ Tool И Python Worker
+
+MVP должен использовать `QProcess` + stdio JSON-RPC/NDJSON как control channel.
+
+Причины:
+
+- C++/Qt стороне удобно запускать и контролировать worker через `QProcess`.
+- Worker lifecycle прост: старт, stdin commands, stdout events/results,
+  stderr logs, exit code/crash handling.
+- Это проще и кроссплатформеннее для MVP, чем local socket, named pipe, gRPC или
+  shared memory.
+- Протокол легко логировать и воспроизводить при диагностике.
+
+JSON/NDJSON используется только для команд, progress, cancellation, ошибок и
+metadata. Большие данные не должны передаваться через JSON.
+
+Большие массивы передаются через временные файлы:
+
+- C++ сторона сохраняет flattened snapshot во временный image/raw/npy-файл и
+  передаёт worker путь.
+- Python worker пишет `segment_map` и masks во временные `.npy`/`.npz` файлы и
+  возвращает пути вместе с metadata.
+- C++ tool читает результат в память, после чего временные файлы можно удалить.
+- Runtime cache сегментов внутри tool-а остаётся in-memory.
+
+Пример формы сообщений:
+
+```json
+{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","model_id":"sam2_hiera_tiny","fingerprint":"..."}}
+{"id":1,"event":"progress","stage":"loading_model","progress":null}
+{"id":1,"event":"progress","stage":"generating_segments","progress":0.42}
+{"id":1,"result":{"segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[]}}
+```
+
+Shared memory можно рассмотреть позже, если временные файлы окажутся узким
+местом. Для MVP она не нужна.
+
+### Входное Изображение
+
+MVP сегментирует flattened projection текущего документа по размеру canvas.
+
+Правила:
+
+- Входом является изображение целиком, а не активный слой.
+- Используется flattened projection всех видимых слоёв.
+- Невидимые слои не учитываются.
+- Bounds равны размеру canvas.
+- Прозрачность считается фоном, а не отдельным объектом.
+- Для RGB-входа модели прозрачные пиксели нужно композитить на стабильный фон и
+  дополнительно хранить alpha/background mask, чтобы не предлагать полностью
+  прозрачные области как сегменты.
+
+Режимы "sample current layer" и сегментация только активного выделения появятся
+позже, после стабилизации основного workflow.
+
+### Подготовка Сегментов И Loader
+
+При активации Smart Select tool должен:
+
+1. Получить snapshot всего текущего изображения.
+2. Проверить, есть ли валидный кэш сегментов для этого snapshot.
+3. Если кэш валиден, сразу включить hover/click interaction.
+4. Если кэша нет, отправить snapshot в worker-процесс.
+5. Получить от worker segment map, masks и метаданные сегментов.
+6. Построить структуру для быстрого hit-test под курсором.
+7. Перейти в интерактивный режим выбора сегментов.
+
+Основная runtime-модель интерактивного выбора:
+
+- C++ tool хранит prepared segment map и metadata по сегментам.
+- Overlay не является отдельным floating window; это состояние отрисовки
+  нативного Krita tool-а.
+- По умолчанию overlay ничего не рисует.
+- При движении курсора tool переводит позицию в image coordinates.
+- По координате курсора tool читает `segment_id` из segment map.
+- Если `segment_id` изменился, tool обновляет `hoverSegmentId` и запрашивает
+  перерисовку старой и новой области сегмента.
+- В `paint()` tool рисует полупрозрачную красную mask только для текущего
+  hover-сегмента.
+- Клик применяет текущий hover-сегмент как выделение Krita с учётом selection
+  modifier mode.
+
+Для MVP предпочтительно иметь label/segment map формата `pixel -> segment_id`,
+чтобы hover hit-test был O(1). Перебор всех masks на каждое движение мыши
+допустим только как временный прототип для маленьких изображений.
+
+Segment map, masks и metadata в MVP хранятся в памяти. Дисковый кэш можно
+добавить позже, если подготовка сегментов окажется достаточно дорогой для
+частого пересчёта между сессиями.
+
+### Selection Modifiers
+
+Поведение должно соответствовать обычным инструментам выделения Krita:
+
+- Click: replace текущего выделения.
+- Shift + click: add.
+- Alt/Ctrl + click: subtract/intersect/toggle в соответствии с нативными
+  conventions Krita и доступными `SelectionAction`.
+
+Точное сопоставление Alt/Ctrl нужно брать из Krita selection tool behavior, а не
+изобретать отдельно.
+
+Пока worker занят, UI не должен выглядеть зависшим:
+
+- На canvas нужно показывать небольшой overlay или inline-состояние tool-а:
+  "Preparing smart segments..." с progress, если он известен.
+- В tool options стоит показывать текущий этап: loading model, reading image,
+  generating segments, building hover index.
+- Progress должен появляться быстро, даже если сначала он indeterminate.
+- Должна быть кнопка Cancel.
+- Если пользователь сменил tool, документ или закрыл изображение, job должен
+  отменяться или уходить в безопасный background state без применения результата
+  к неправильному документу.
+- Ошибка подготовки должна показывать короткое понятное сообщение и действия из
+  support flow: Diagnostic Report, full log, logs folder, GitHub issue.
+
+### Кэш Сегментов
+
+Кэш сегментов относится к изображению целиком. MVP не пытается отдельно
+кэшировать активный слой или режимы "sample current layer".
+
+Ключ кэша должен включать:
+
+- Стабильный id документа, если его можно получить или сохранить.
+- Размер изображения.
+- Цветовую модель/depth, если доступно.
+- Registry id выбранной модели.
+- Версию алгоритма подготовки сегментов.
+- Дешёвый fingerprint изображения.
+
+Fingerprint изображения должен быть консервативным. Рекомендуемый MVP-подход:
+сделать downscale snapshot всего изображения до небольшого размера, например
+64x64 или 128x128, привести к RGB/RGBA U8 и посчитать hash байтов. Для более
+мягкой эвристики можно дополнительно считать mean absolute difference между
+предыдущим и новым downscaled snapshot.
+
+Правило reuse должно быть осторожным:
+
+- Если размеры изображения или model id изменились, кэш невалиден.
+- Если fingerprint совпал, кэш можно использовать.
+- Если fingerprint не совпал, кэш невалиден.
+- Если есть сомнение, кэш нужно инвалидировать и пересчитать сегменты.
+
+Follow-up после MVP: можно добавить более умные perceptual hashes, mean absolute
+difference или Jaccard/IoU по карте изменённых пикселей, чтобы разрешать reuse
+при небольших изменениях. В MVP similarity thresholds не используются.
 
 ## Observability И Диагностика
 
@@ -275,18 +473,42 @@ Diagnostic Report нужен не вместо полноценных логов
 Желаемый UX вдохновлён Krita Vision Tools, где сегментация реализована как
 нативные инструменты Krita.
 
-Для Python-only плагина наиболее вероятный путь - Qt overlay/event-filter
-подход:
+Для MVP canvas/tool слой должен быть C++/hybrid, а не Python-only overlay.
 
-- Найти активный Krita canvas/view.
-- Маппить координаты мыши из widget/canvas space в image coordinates.
-- Рисовать прозрачный overlay поверх canvas.
-- Делать hit-test сгенерированных masks при hover.
-- Рисовать подсвеченную mask поверх canvas.
-- По клику применять результат через API выделений Krita.
+C++ часть отвечает за:
 
-Если Python-интеграция с canvas окажется слишком хрупкой, нужно рассмотреть C++
-или hybrid plugin для слоя canvas tool.
+- Нативный Krita tool lifecycle.
+- Получение canvas/image coordinates.
+- Cursor и selection modifier behavior.
+- Хранение текущего `hoverSegmentId`.
+- Hit-test по prepared segment map под курсором.
+- Отрисовку hover-подсветки готового сегмента в `paint()`.
+- Применение mask как обычного выделения Krita.
+- Инвалидацию/отмену текущего interaction state при смене документа, tool или
+  изображения.
+
+Python часть может отвечать за worker orchestration, model registry, download,
+кэш и PyTorch/SAM2 inference. Граница между C++ tool и worker должна быть
+небольшой: передать snapshot изображения на подготовку, получить список masks и
+метаданные сегментов, затем применять выбранные masks через нативный Krita API.
+
+Krita Vision Tools полезен как reference для:
+
+- C++ plugin/module сборки под Krita.
+- Регистрации нативных tools.
+- Получения canvas/image coordinates.
+- Применения pixel selection через Krita API.
+- Отрисовки tool overlay через `paint()` и `updateCanvas()`.
+- Python loader-обёртки для native library.
+
+Krita Vision Tools не отвечает на несколько решений Krita Smart Select:
+
+- IPC между C++ tool и отдельным Python/PyTorch worker.
+- Prepared automatic segmentation всего изображения.
+- Формат `segment_map` / `pixel -> segment_id`.
+- Hover-подсветку сегмента в segmentation tool.
+- Кэш segment maps/masks.
+- SAM2 PyTorch dependency management.
 
 ## Исходные Проекты И Attribution
 
@@ -335,6 +557,7 @@ Krita Vision Tools полезен как reference для нативного can
 - Комбинирование masks
 - Worker protocol
 - Error handling и cancellation
+- Image fingerprint/cache invalidation
 
 Krita integration должна иметь отдельные smoke/integration tests там, где это
 практически возможно.
@@ -344,15 +567,12 @@ Krita integration должна иметь отдельные smoke/integration t
 - Загрузка пользовательских кастомных моделей
 - Поддержка GGUF-моделей
 - SAM3 как default или обязательный backend
-- Полная нативная C++ tool-реализация, если Python overlay окажется достаточным
+- Prompt-based selection по point/box
+- Выбор/генерация сегментов только на основании активного выделения
+- Отдельный режим "sample current layer"; MVP работает с текущим изображением
+  целиком
 - Сложное generative editing или inpainting
 
 ## Открытые Вопросы
 
-- Может ли Python надёжно находить active Krita canvas и рисовать overlay поверх
-  него во всех поддерживаемых версиях Krita?
-- Достаточно ли Python event filtering для ощущения polished tool?
-- Какой минимальный приемлемый hardware profile для каждой SAM2-модели?
-- Должна ли automatic mask generation выполняться eager, lazy или по явному
-  действию пользователя для каждого слоя?
-- Как изменения документа/слоя должны инвалидировать cached embeddings и masks?
+- Нет блокирующих открытых вопросов для перехода к планированию MVP.

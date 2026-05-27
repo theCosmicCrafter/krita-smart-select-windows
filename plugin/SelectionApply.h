@@ -1,0 +1,22 @@
+#ifndef SMART_SELECT_SELECTION_APPLY_H_
+#define SMART_SELECT_SELECTION_APPLY_H_
+
+#include "SegmentMap.h"
+
+#include <kis_types.h>
+#include <kis_selection_tool_config_widget_helper.h>
+
+class KoCanvasBase;
+
+bool applySegmentSelection(KoCanvasBase *canvas,
+                           KisImageSP image,
+                           KisNodeSP node,
+                           const SegmentMap &segmentMap,
+                           quint16 segmentId,
+                           SelectionAction action,
+                           int grow,
+                           int feather,
+                           bool antiAlias);
+
+#endif // SMART_SELECT_SELECTION_APPLY_H_
+

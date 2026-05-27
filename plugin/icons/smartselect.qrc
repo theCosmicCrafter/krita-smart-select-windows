@@ -1,0 +1,10 @@
+<!--
+  SPDX-FileCopyrightText: 2026 Krita Smart Select contributors
+  SPDX-License-Identifier: CC0-1.0
+-->
+<RCC>
+    <qresource prefix="/">
+        <file alias="light_tool_smart_select.svg">light_tool_smart_select.svg</file>
+        <file alias="dark_tool_smart_select.svg">dark_tool_smart_select.svg</file>
+    </qresource>
+</RCC>

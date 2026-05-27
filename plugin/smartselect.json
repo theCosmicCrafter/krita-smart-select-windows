@@ -1,0 +1,10 @@
+{
+    "Id": "Smart Select",
+    "Type": "Service",
+    "X-KDE-Library": "kritasmartselect",
+    "X-KDE-ServiceTypes": [
+        "Krita/Tool"
+    ],
+    "X-Krita-Version": "28"
+}
+

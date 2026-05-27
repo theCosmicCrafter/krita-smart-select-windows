@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ActionCollection version="2" name="Tools">
+  <Actions category="tool-shortcuts">
+    <text>Tool Shortcuts</text>
+    <Action name="SmartSelectTool">
+      <icon>tool_smart_select</icon>
+      <text>Smart Select</text>
+      <whatsThis></whatsThis>
+      <toolTip>Smart Select</toolTip>
+      <iconText>Smart Select</iconText>
+      <shortcut></shortcut>
+      <isCheckable>false</isCheckable>
+      <statusTip></statusTip>
+    </Action>
+  </Actions>
+</ActionCollection>
