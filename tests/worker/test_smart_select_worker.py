@@ -247,6 +247,8 @@ class SmartSelectWorkerTests(unittest.TestCase):
                     site_packages=Path(temp_dir) / "runtime" / "venv" / "site-packages",
                     torch_version="2.5.1",
                     cuda_available=True,
+                    cuda_home="/usr/local/cuda-12.4",
+                    sam2_cuda_extension=True,
                 )
 
             mask = [[False for _x in range(32)] for _y in range(24)]
@@ -302,7 +304,7 @@ class SmartSelectWorkerTests(unittest.TestCase):
                             "model_cache_dir": str(cache_root),
                             "runtime_cache_dir": str(Path(temp_dir) / "runtime"),
                             "model_id": "sam2.1_hiera_large",
-                            "algorithm_version": "sam2.1-auto-mask-v1",
+                            "algorithm_version": "sam2.1-auto-mask-quality-v1",
                             "fingerprint": "fingerprint",
                             "canvas_width": 32,
                             "canvas_height": 24,

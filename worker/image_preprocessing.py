@@ -54,7 +54,7 @@ def load_preprocessed_image(
         alpha_mask = bytes(alpha_image.tobytes())
 
     return PreprocessedImage(
-        image_array=numpy_module.asarray(image),
+        image_array=numpy_module.array(image, copy=True),
         alpha_mask=alpha_mask,
         canvas_width=canvas_width,
         canvas_height=canvas_height,

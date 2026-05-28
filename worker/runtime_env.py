@@ -16,7 +16,10 @@ from runtime_manifest import (
     PYTHON_PACKAGES,
     RUNTIME_PYTHON_VERSION,
     RUNTIME_VERSION,
+    SAM2_BUILD_ALLOW_ERRORS,
     SAM2_BUILD_CUDA,
+    SAM2_PACKAGE,
+    SAM2_REQUIRE_CUDA_EXTENSION,
     SAM2_SOURCE_REF,
     TORCH_INDEX_URL,
     TORCH_PACKAGES,
@@ -66,6 +69,8 @@ class RuntimeReady:
     site_packages: Path
     torch_version: str | None
     cuda_available: bool
+    cuda_home: str | None
+    sam2_cuda_extension: bool
 
 
 def _required_python_major_minor() -> tuple[int, int]:
@@ -170,6 +175,7 @@ def ensure_runtime(
         cache_state="ready",
         runtime_version=RUNTIME_VERSION,
         cuda_available=ready.cuda_available,
+        sam2_cuda_extension=ready.sam2_cuda_extension,
     )
     return ready
 
@@ -265,6 +271,13 @@ def _install_dependencies(
         "UV_CACHE_DIR": str(pip_cache_dir / "uv"),
         "PYTHONNOUSERSITE": "1",
     }
+    cuda_home = _detect_cuda_home()
+    if cuda_home is not None:
+        base_env.update(_cuda_build_environment(cuda_home))
+        _log_worker_event("runtime.cuda_toolkit.found", cuda_home=cuda_home)
+    elif SAM2_BUILD_CUDA == "1":
+        _log_worker_event("runtime.cuda_toolkit.missing")
+
     _run_process(
         _install_command(
             python_executable,
@@ -281,9 +294,79 @@ def _install_dependencies(
     )
     _run_process(
         _install_command(python_executable, PYTHON_PACKAGES),
-        {**base_env, "SAM2_BUILD_CUDA": SAM2_BUILD_CUDA},
+        base_env,
         context,
     )
+    _run_process(
+        _install_command(
+            python_executable,
+            (SAM2_PACKAGE,),
+            force_reinstall=True,
+            no_deps=True,
+            no_build_isolation=True,
+        ),
+        {
+            **base_env,
+            "SAM2_BUILD_CUDA": SAM2_BUILD_CUDA,
+            "SAM2_BUILD_ALLOW_ERRORS": SAM2_BUILD_ALLOW_ERRORS,
+        },
+        context,
+    )
+
+
+def _detect_cuda_home() -> str | None:
+    for key in ("SMART_SELECT_CUDA_HOME", "CUDA_HOME", "CUDA_PATH"):
+        value = os.environ.get(key)
+        if value and _is_cuda_home(Path(value)):
+            return str(Path(value))
+
+    for candidate in (
+        Path("/usr/local/cuda-12.4"),
+        Path("/usr/local/cuda"),
+        Path.home() / ".local/share/krita/smart_select/cuda-12.4",
+        Path.home() / "miniconda3",
+    ):
+        if _is_cuda_home(candidate):
+            return str(candidate)
+
+    nvcc = shutil.which("nvcc")
+    if nvcc is not None:
+        candidate = Path(nvcc).resolve().parents[1]
+        if _is_cuda_home(candidate):
+            return str(candidate)
+    return None
+
+
+def _is_cuda_home(path: Path) -> bool:
+    return (path / "bin" / "nvcc").exists() and (
+        (path / "lib64").exists() or (path / "lib").exists()
+    )
+
+
+def _cuda_build_environment(cuda_home: str) -> dict[str, str]:
+    path = Path(cuda_home)
+    existing_path = os.environ.get("PATH", "")
+    existing_library_path = os.environ.get("LD_LIBRARY_PATH", "")
+    library_dirs = [
+        str(candidate) for candidate in (path / "lib64", path / "lib") if candidate.exists()
+    ]
+    env = {
+        "CUDA_HOME": cuda_home,
+        "CUDA_PATH": cuda_home,
+        "PATH": f"{path / 'bin'}{os.pathsep}{existing_path}"
+        if existing_path
+        else str(path / "bin"),
+        "LD_LIBRARY_PATH": os.pathsep.join(
+            [*library_dirs, existing_library_path] if existing_library_path else library_dirs
+        ),
+    }
+    conda_cc = path / "bin" / "x86_64-conda-linux-gnu-gcc"
+    conda_cxx = path / "bin" / "x86_64-conda-linux-gnu-g++"
+    if conda_cc.exists() and conda_cxx.exists():
+        env["CC"] = str(conda_cc)
+        env["CXX"] = str(conda_cxx)
+        env["CUDAHOSTCXX"] = str(conda_cxx)
+    return env
 
 
 def _install_command(
@@ -292,11 +375,20 @@ def _install_command(
     *,
     index_url: str | None = None,
     upgrade: bool = False,
+    force_reinstall: bool = False,
+    no_deps: bool = False,
+    no_build_isolation: bool = False,
 ) -> list[str]:
     if _python_has_pip(python_executable):
         command = [str(python_executable), "-m", "pip", "install"]
         if upgrade:
             command.append("--upgrade")
+        if force_reinstall:
+            command.append("--force-reinstall")
+        if no_deps:
+            command.append("--no-deps")
+        if no_build_isolation:
+            command.append("--no-build-isolation")
         if index_url is not None:
             command.extend(["--index-url", index_url])
         command.extend(packages)
@@ -309,6 +401,12 @@ def _install_command(
     command = [uv, "pip", "install", "--python", str(python_executable)]
     if upgrade:
         command.append("--upgrade")
+    if force_reinstall:
+        command.append("--force-reinstall")
+    if no_deps:
+        command.append("--no-deps")
+    if no_build_isolation:
+        command.append("--no-build-isolation")
     if index_url is not None:
         command.extend(["--index-url", index_url])
     command.extend(packages)
@@ -373,11 +471,25 @@ def _validate_runtime(root: Path) -> RuntimeReady:
         importlib.import_module("PIL.Image")
         importlib.import_module("sam2.build_sam")
         importlib.import_module("sam2.automatic_mask_generator")
+        sam2_cuda_extension = _sam2_cuda_extension_available()
     except Exception as exc:
+        _log_worker_event(
+            "runtime.validation.failed",
+            error_type=type(exc).__name__,
+            reason=str(exc),
+        )
         raise RuntimeDependencyError("SAM2 dependencies are not available") from exc
+    if SAM2_REQUIRE_CUDA_EXTENSION and not sam2_cuda_extension:
+        _log_worker_event(
+            "runtime.validation.failed",
+            error_type="Sam2CudaExtensionMissing",
+            reason="sam2._C import failed",
+        )
+        raise RuntimeDependencyError("SAM2 dependencies are not available") from None
 
     version = getattr(torch, "__version__", None)
     cuda_available = bool(torch.cuda.is_available())
+    cuda_home = _detect_cuda_home()
     return RuntimeReady(
         root=root,
         venv_path=status.venv_path,
@@ -385,7 +497,22 @@ def _validate_runtime(root: Path) -> RuntimeReady:
         site_packages=site_packages,
         torch_version=str(version) if version is not None else None,
         cuda_available=cuda_available,
+        cuda_home=cuda_home,
+        sam2_cuda_extension=sam2_cuda_extension,
     )
+
+
+def _sam2_cuda_extension_available() -> bool:
+    try:
+        importlib.import_module("sam2._C")
+    except Exception as exc:
+        _log_worker_event(
+            "runtime.validation.sam2_cuda_extension_failed",
+            error_type=type(exc).__name__,
+            reason=str(exc),
+        )
+        return False
+    return True
 
 
 def _site_packages_path(python_executable: Path) -> Path:
@@ -416,6 +543,8 @@ def _write_runtime_json(root: Path, ready: RuntimeReady) -> None:
         "sam2_source_ref": SAM2_SOURCE_REF,
         "torch_version": ready.torch_version,
         "cuda_available": ready.cuda_available,
+        "cuda_home": ready.cuda_home,
+        "sam2_cuda_extension": ready.sam2_cuda_extension,
     }
     (root / "runtime.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

@@ -43,6 +43,7 @@ class JobRunner:
         self._emit_error = emit_error
         self._lock = threading.Lock()
         self._active: JobContext | None = None
+        self._active_thread: threading.Thread | None = None
 
     def start(self, job_id: int, params: Mapping[str, Any]) -> bool:
         with self._lock:
@@ -60,6 +61,8 @@ class JobRunner:
             name=f"smart-select-job-{job_id}",
             daemon=False,
         )
+        with self._lock:
+            self._active_thread = thread
         thread.start()
         return True
 
@@ -71,6 +74,14 @@ class JobRunner:
         context.cancel()
         return True
 
+    def wait_for_idle(self) -> None:
+        while True:
+            with self._lock:
+                thread = self._active_thread
+            if thread is None:
+                return
+            thread.join()
+
     def _run(self, context: JobContext, params: Mapping[str, Any]) -> None:
         try:
             self._target(context, params)
@@ -81,6 +92,7 @@ class JobRunner:
             with self._lock:
                 if self._active is context:
                     self._active = None
+                    self._active_thread = None
 
     def _clear_finished_locked(self) -> None:
         return

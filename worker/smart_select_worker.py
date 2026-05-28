@@ -593,6 +593,9 @@ def main() -> None:
             except Exception:
                 job_id = 0
             emit_error(job_id, exc.__class__.__name__, "Smart Select worker failed")
+    runner = _job_runner
+    if runner is not None:
+        runner.wait_for_idle()
 
 
 if __name__ == "__main__":

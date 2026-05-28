@@ -1,9 +1,9 @@
 # Krita Smart Select Documentation
 
 Krita Smart Select - плагин для Krita, который помогает создавать выделения с
-помощью AI. Основной сценарий: пользователь активирует Smart Select, плагин
-готовит сегменты текущего изображения, затем пользователь выбирает подходящий
-сегмент прямо на canvas через hover/click.
+помощью AI. Основной сценарий MVP: пользователь активирует Smart Select,
+обводит область интереса на canvas, а SAM2 уточняет эту область до объекта или
+части объекта и применяет результат как обычное выделение Krita.
 
 ## Статус MVP
 
@@ -17,6 +17,8 @@ Krita Smart Select - плагин для Krita, который помогает 
   alpha mask handling, in-memory cache reuse, SAM2.1 Large
   registry/download/cache verification, automatic runtime bootstrap and real
   SAM2.1 Large inference in the worker.
+- Current product direction: move the MVP quality path from full-image prepared
+  hover segmentation to region-prompted lasso/box segmentation.
 - Not implemented yet: model picker, lighter presets, persistent logs and
   support dialog.
 

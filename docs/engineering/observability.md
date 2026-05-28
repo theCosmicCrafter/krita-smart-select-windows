@@ -23,6 +23,8 @@
 - ОС и архитектуру;
 - доступные устройства inference: CPU, CUDA и другие backend, если появятся;
 - выбранную модель и её registry id;
+- тип job-а: full-image spike или lasso/region selection;
+- lasso/region bbox и размеры mask, но не пиксельные данные mask;
 - состояние model cache;
 - этапы загрузки и проверки модели;
 - start/progress/cancellation/result inference jobs;
@@ -60,6 +62,8 @@
 - `sam.generate.start`
 - `sam.generate.result`
 - `segment_map.result`
+- `selection_mask.result`
+- `region_input.result`
 - `selection.apply.failed`
 
 Stable event names важнее красивого текста. User-facing message может быть
@@ -114,6 +118,34 @@ Diagnostic Report нужен не вместо полноценных логов
 - stderr/stdout worker-процесса;
 - детали model loading;
 - ошибки Krita API.
+
+## Debug Segment Maps And Selection Masks
+
+По умолчанию временные snapshot/result файлы удаляются после успешного чтения
+C++ tool-ом. Для локального дебага можно запустить Krita с:
+
+```bash
+SMART_SELECT_KEEP_DEBUG_FILES=1 /path/to/krita.AppImage
+```
+
+В этом режиме логи `temp_file.kept_for_debug` и `inference.result` покажут пути
+к `snapshot.png`, `alpha_mask.npy`, `region_mask.npy`, `selection_mask.npy`,
+`segment_map.npy` и `segments.npz`, если эти файлы участвуют в текущем job-е.
+
+`segment_map.npy` можно отрендерить в PPM:
+
+```bash
+./scripts/render-segment-map.py /tmp/krita-smart-select-.../segment_map.npy /tmp/segments.ppm
+```
+
+Для отдельного segment id:
+
+```bash
+./scripts/render-segment-map.py /tmp/krita-smart-select-.../segment_map.npy /tmp/segment-12.ppm --segment-id 12
+```
+
+Debug files can contain document-derived image data and must not be attached to
+public issues unless the user explicitly wants to share the image.
 
 ## Redaction Rules
 

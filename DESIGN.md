@@ -13,6 +13,8 @@ entrypoint и указателем на актуальные документы.
 - Krita 5.3.1.
 - Native C++ canvas tool + Python loader/worker.
 - Worker transport: `QProcess` + stdio NDJSON.
+- Основной UX direction: lasso/region-prompted Smart Select, без
+  click-to-select по full-image prepared сегментам.
 
 ## Документация
 

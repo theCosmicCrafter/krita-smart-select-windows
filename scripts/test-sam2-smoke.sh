@@ -20,6 +20,7 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 from __future__ import annotations
 
 import json
+import shutil
 import struct
 import subprocess
 import sys
@@ -76,7 +77,7 @@ request = {
         "image_path": str(image_path),
         "alpha_mask_path": str(alpha_path),
         "model_id": "sam2.1_hiera_large",
-        "algorithm_version": "sam2.1-auto-mask-v1",
+        "algorithm_version": "sam2.1-auto-mask-quality-v1",
         "fingerprint": "sam2-smoke",
         "canvas_width": width,
         "canvas_height": height,
@@ -85,8 +86,15 @@ request = {
     },
 }
 
+launcher = root / "python" / "smart_select" / "worker_launcher.py"
+worker_command = (
+    [str(launcher), str(root / "worker" / "smart_select_worker.py")]
+    if launcher.exists() and shutil.which("uv") is not None
+    else [sys.executable, str(root / "worker" / "smart_select_worker.py")]
+)
+
 completed = subprocess.run(
-    [sys.executable, str(root / "worker" / "smart_select_worker.py")],
+    worker_command,
     input=json.dumps(request) + "\n",
     text=True,
     capture_output=True,

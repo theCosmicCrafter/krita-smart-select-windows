@@ -45,6 +45,13 @@ Hardware profile в `ModelRegistry` должен быть консерватив
 Для первого real inference этапа default выбран **SAM2.1 Hiera Large**, потому
 что нужно сразу проверять максимальное качество, а не быстрый минимальный путь.
 
+В рамках MVP активная модель используется в quality-first lasso/region-prompted
+workflow. Full-image automatic mask generation остаётся реализованным spike и
+может вернуться как быстрый режим, но не является главным quality path.
+Отдельные speed/quality presets пока не вводятся: если модель слишком тяжёлая
+для машины пользователя, пользователь должен будет выбрать более лёгкую модель
+через будущий model picker.
+
 Automatic mask generation для Base Plus и Large нужно помечать как тяжёлую
 операцию. UI может предупреждать пользователя, если изображение большое или
 выбранная модель явно не соответствует доступной памяти.
@@ -122,8 +129,33 @@ UI-ветки.
 - default model id `sam2.1_hiera_large`;
 - download/cache/verify checkpoint-а в worker process;
 - automatic SAM2 runtime bootstrap через user-level venv/cache;
-- real SAM2.1 Large automatic mask generation;
+- real SAM2.1 Large automatic mask generation для full-image spike;
 - conversion from SAM masks to `uint16` segment map;
 - runtime diagnostics foundation.
 
 Mock model id всё ещё поддерживается для быстрых тестов и development smoke.
+
+Текущие параметры automatic mask generation для реализованного full-image spike
+intentionally quality-first:
+
+- `points_per_side = 64`;
+- `crop_n_layers = 1`;
+- `crop_n_points_downscale_factor = 1`;
+- `stability_score_thresh = 0.95`;
+- `min_mask_region_area = 64`;
+- `use_m2m = True`;
+- `points_per_batch = 128`, чтобы целиться в машины с 16 GB VRAM и ускорить
+  генерацию через более крупные GPU batches.
+
+Follow-up: добавить настройку VRAM/performance budget в model picker. Для
+слабых GPU пользователь должен иметь возможность выбрать меньшую модель или
+меньший `points_per_batch`, не меняя quality preset вручную.
+
+SAM2 custom CUDA extension включён для mask post-processing. Runtime требует
+`sam2._C`, а `min_mask_region_area = 64` включает cleanup маленьких дыр и
+изолированных фрагментов внутри SAM2 automatic mask generator.
+
+Следующий MVP path должен использовать SAM2.1 Large через lasso/region prompt:
+пользователь задаёт область, worker запускает inference на crop/region, а
+результатом является single selection mask. Click-to-select по prepared
+full-image segment map не входит в ближайший MVP.

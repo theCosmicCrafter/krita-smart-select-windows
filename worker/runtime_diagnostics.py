@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import platform
 import sys
 from importlib import import_module
@@ -60,15 +61,26 @@ def _runtime_diagnostics(runtime_cache_dir: Path | None) -> JsonObject:
         }
 
     status = runtime_status(runtime_cache_dir)
+    marker = _runtime_marker(status.runtime_json)
     return {
         "cache_state": status.state,
         "runtime_version": status.version or RUNTIME_VERSION,
         "venv_exists": status.venv_path.exists(),
         "python_executable": str(status.python_executable),
         "sam2_source_ref": status.sam2_source_ref or SAM2_SOURCE_REF,
+        "cuda_home": marker.get("cuda_home"),
+        "sam2_cuda_extension": marker.get("sam2_cuda_extension", False),
         "sam2_importable": False,
         "torch_importable": False,
     }
+
+
+def _runtime_marker(path: Path) -> JsonObject:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def collect_runtime_diagnostics(

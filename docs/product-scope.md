@@ -15,49 +15,56 @@ Krita Smart Select помогает создавать выделения в Kri
 
 Ожидаемый опыт должен быть ближе к нативному инструменту выделения, чем к
 отдельному окну с миниатюрой изображения. Пользователь работает на настоящем
-canvas Krita, видит интерактивную подсветку кандидата и применяет выбранный
-сегмент как обычное выделение Krita.
+canvas Krita: грубо задаёт область интереса обычным жестом выделения, а SAM2
+уточняет её до объекта или части объекта и применяет результат как обычное
+выделение Krita.
 
 ## Основной UX
 
 1. Пользователь активирует Smart Select tool.
-2. Плагин проверяет кэш сегментов для текущего изображения.
-3. Если валидного кэша нет, плагин запускает подготовку сегментов для всего
-   изображения.
-4. Пока сегменты готовятся, Krita остаётся отзывчивой, а tool показывает
+2. Пользователь обводит область интереса lasso/freehand selection gesture или
+   задаёт прямоугольную область.
+3. Плагин экспортирует snapshot/crop этой области с небольшим padding и
+   передаёт worker-у region prompt.
+4. Worker запускает SAM2.1 Large на ограниченной области, строит одну или
+   несколько candidate masks и выбирает лучший результат для заданной области.
+5. Пока сегментация выполняется, Krita остаётся отзывчивой, а tool показывает
    progress/loader в canvas/tool options.
-5. Когда сегменты готовы, при движении курсора над canvas подсвечивается
-   сегмент-кандидат под указателем.
-6. Клик применяет подсвеченный сегмент как выделение Krita.
-7. Клавиши-модификаторы должны следовать нативному поведению selection tools в
+6. Результат подсвечивается на canvas как preview.
+7. Tool применяет mask как выделение Krita для завершённой lasso-области.
+8. Клавиши-модификаторы должны следовать нативному поведению selection tools в
    Krita.
 
-## Prepared Segmentation Model
+## Region-Prompted Segmentation Model
 
-Первая версия работает как prepared segmentation tool:
+Первая версия переходит на quality-first region-prompted workflow:
 
-- сначала строится карта сегментов для изображения;
-- затем пользователь выбирает уже готовые сегменты мышью.
+- пользователь сначала ограничивает область поиска;
+- SAM2 запускается на crop/region prompt вместо всего изображения;
+- завершение lasso gesture применяет уточнённую mask как Krita selection;
+- автоматическая full-image segment map больше не является центральным
+  сценарием MVP.
 
-Prompt-based selection по клику/box и выбор сегментов на основании активного
-выделения не входят в MVP.
+Предыдущий prepared full-image hover/click flow остаётся полезным canvas spike и
+может вернуться как отдельный быстрый режим, но качество MVP теперь оценивается
+по region-prompted результату.
 
 ## MVP Scope
 
 В MVP входит:
 
-- сегментация текущего изображения целиком;
 - flattened projection всех видимых слоёв;
-- автоматическая подготовка сегментов при активации tool;
-- hover-подсветка сегмента под курсором;
-- click-to-selection;
+- lasso/freehand region input на canvas;
+- SAM2.1 Large segmentation по ограниченной области;
+- preview результата на canvas;
+- apply-to-selection;
 - selection modifiers по нативным conventions Krita;
 - worker-backed inference pipeline;
 - in-memory runtime cache.
 
-Отдельная команда `Generate all masks for image/layer` в MVP не нужна:
-генерация сегментов запускается автоматически при активации Smart Select, если
-для текущего изображения нет валидного кэша.
+Отдельная команда `Generate all masks for image/layer` в MVP не нужна. Full-image
+automatic masks считаются отдельным режимом/follow-up, а не обязательным шагом
+при активации Smart Select.
 
 ## Future Commands
 
@@ -66,13 +73,14 @@ Prompt-based selection по клику/box и выбор сегментов на
 - `Refresh segments` / `Rebuild smart select cache` для ручного пересчёта.
 - `Extract selection to new layer` для создания нового слоя из выбранного
   сегмента.
+- Full-image prepared hover/click mode для быстрых выборов без lasso.
+- Candidate mask debug export для анализа качества SAM2 и постобработки.
+- Click-to-select сегменты из prepared full-image карты.
 
 ## Non-Goals Первой Версии
 
 - Загрузка пользовательских кастомных моделей.
 - Поддержка GGUF-моделей.
 - SAM3 как default или обязательный backend.
-- Prompt-based selection по point/box.
-- Выбор или генерация сегментов только на основании активного выделения.
 - Отдельный режим `sample current layer`.
 - Сложное generative editing или inpainting.

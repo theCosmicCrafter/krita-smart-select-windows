@@ -19,9 +19,8 @@ C++ часть отвечает за:
 - native Krita tool lifecycle;
 - получение canvas/image coordinates;
 - cursor и selection modifier behavior;
-- хранение текущего `hoverSegmentId`;
-- O(1) hit-test по prepared segment map;
-- отрисовку hover-подсветки в `paint()`;
+- сбор lasso/freehand region input на canvas;
+- отрисовку lasso/preparation/result preview в `paint()`;
 - применение mask как обычного выделения Krita;
 - инвалидацию interaction state при смене документа, tool или изображения.
 
@@ -34,35 +33,37 @@ Python часть отвечает за:
 - PyTorch/SAM2 inference в worker process.
 
 Граница между C++ tool и worker должна быть небольшой: C++ передаёт snapshot
-изображения на подготовку, worker возвращает `segment_map`, masks и metadata,
-после чего C++ выполняет hit-test, overlay и selection apply.
+изображения и lasso/region prompt на подготовку, worker возвращает result mask,
+опциональную `segment_map`, masks и metadata, после чего C++ выполняет preview и
+selection apply.
 
 ## Canvas Integration
 
 Для MVP canvas/tool слой должен быть C++/hybrid, а не Python-only overlay.
 
-Overlay не является отдельным floating window или QWidget. Это состояние
-отрисовки нативного Krita tool-а:
+Overlay/preview не является отдельным floating window или QWidget. Это
+состояние отрисовки нативного Krita tool-а:
 
 - по умолчанию overlay ничего не рисует;
-- при движении курсора tool переводит позицию в image coordinates;
-- по координате курсора tool читает `segment_id` из segment map;
-- если `segment_id` изменился, tool обновляет `hoverSegmentId`;
-- tool запрашивает repaint старой и новой области сегмента;
-- в `paint()` tool рисует полупрозрачную красную mask только для текущего
-  hover-сегмента.
+- во время lasso gesture tool рисует нативный контур области;
+- пока worker готовит результат, tool показывает preparing state;
+- после результата tool рисует полупрозрачную mask preview в `paint()`;
+- repaint ограничивается bbox preview/region там, где это практически возможно.
 
-Для MVP предпочтителен label/segment map формат `pixel -> segment_id`, чтобы
-hover hit-test был O(1). Перебор всех masks на каждое движение мыши допустим
-только как временный прототип для маленьких изображений.
+Full-image prepared hover/click spike может использовать label/segment map
+формат `pixel -> segment_id` для O(1) hit-test. Для основного MVP lasso workflow
+authoritative result может быть single mask с bbox/metadata; full-canvas
+`segment_map` остаётся допустимым транспортным форматом, если это упрощает C++
+selection apply.
 
 ## Selection Behavior
 
-Поведение должно соответствовать обычным инструментам выделения Krita:
+Поведение lasso-выделения должно соответствовать обычным инструментам выделения
+Krita:
 
-- Click: replace текущего выделения.
-- Shift + click: add.
-- Alt/Ctrl + click: subtract/intersect/toggle в соответствии с нативными
+- Завершение lasso gesture без modifier: replace текущего выделения.
+- Shift + завершение lasso: add.
+- Alt/Ctrl + завершение lasso: subtract/intersect/toggle в соответствии с нативными
   conventions Krita и доступными `SelectionAction`.
 
 Точное сопоставление Alt/Ctrl нужно брать из Krita selection tool behavior, а не
@@ -72,7 +73,7 @@ hover hit-test был O(1). Перебор всех masks на каждое дв
 
 Пока worker занят, UI не должен выглядеть зависшим:
 
-- На canvas или в tool options нужно показывать `Preparing smart segments...`.
+- На canvas или в tool options нужно показывать `Preparing smart selection...`.
 - Нужно показывать текущий stage: `checking_runtime`, `creating_runtime`,
   `installing_runtime_dependencies`, `validating_runtime`, `resolving_model`,
   `checking_model_cache`, `downloading_model`, `verifying_model`,
@@ -85,6 +86,14 @@ hover hit-test был O(1). Перебор всех masks на каждое дв
   к неправильному документу.
 - Ошибка подготовки должна показывать короткое понятное сообщение и действия из
   support flow.
+
+## Product Direction
+
+Первоначальный canvas spike доказал full-image prepared hover/click overlay, но
+качество automatic masks на сложных краях оказалось главным ограничением.
+Основной MVP workflow переориентирован на lasso/region-prompted segmentation:
+пользователь задаёт область интереса, SAM2 работает на crop/region prompt, а
+результат применяется как выделение без дополнительного click-to-select шага.
 
 ## Packaging Target
 
@@ -105,8 +114,8 @@ MVP таргетирует конкретную версию Krita, а не ши
 Уже реализовано:
 
 - native Smart Select tool registration;
-- canvas hover overlay для prepared segment map;
-- click-to-selection;
+- legacy full-image canvas hover overlay для prepared segment map;
+- legacy click-to-selection для full-image spike;
 - Python loader wrapper;
 - worker-backed mock segmentation через `QProcess`;
 - flattened snapshot export as RGB PNG plus alpha mask;
@@ -124,5 +133,7 @@ MVP таргетирует конкретную версию Krita, а не ши
 
 Ещё не реализовано:
 
+- lasso/region-prompted MVP flow;
 - model picker and lighter model presets;
+- candidate mask debug export;
 - persistent logs and support dialog.

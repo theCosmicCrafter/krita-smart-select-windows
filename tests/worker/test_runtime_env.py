@@ -92,6 +92,8 @@ class RuntimeEnvTests(unittest.TestCase):
                     site_packages=root / "venv" / "site-packages",
                     torch_version="2.5.1",
                     cuda_available=True,
+                    cuda_home="/usr/local/cuda-12.4",
+                    sam2_cuda_extension=True,
                 )
 
                 ready = runtime_env.ensure_runtime(root, lambda _stage, _progress, _extra: None)
@@ -176,6 +178,35 @@ class RuntimeEnvTests(unittest.TestCase):
             ],
         )
 
+    def test_install_command_supports_forced_no_deps_install(self) -> None:
+        original_python_has_pip = runtime_env._python_has_pip
+        try:
+            runtime_env._python_has_pip = lambda _python: True
+
+            command = runtime_env._install_command(
+                Path("/tmp/runtime/venv/bin/python"),
+                ("git+https://example.invalid/sam2.git@abc",),
+                force_reinstall=True,
+                no_deps=True,
+                no_build_isolation=True,
+            )
+        finally:
+            runtime_env._python_has_pip = original_python_has_pip
+
+        self.assertEqual(
+            command,
+            [
+                "/tmp/runtime/venv/bin/python",
+                "-m",
+                "pip",
+                "install",
+                "--force-reinstall",
+                "--no-deps",
+                "--no-build-isolation",
+                "git+https://example.invalid/sam2.git@abc",
+            ],
+        )
+
     def test_create_venv_uses_uv_for_missing_runtime(self) -> None:
         calls: list[list[str]] = []
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -204,6 +235,47 @@ class RuntimeEnvTests(unittest.TestCase):
                 ]
             ],
         )
+
+    def test_detect_cuda_home_prefers_smart_select_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cuda_home = Path(temp_dir)
+            (cuda_home / "bin").mkdir()
+            (cuda_home / "lib").mkdir()
+            (cuda_home / "bin" / "nvcc").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            original_environ = dict(runtime_env.os.environ)
+            try:
+                runtime_env.os.environ.clear()
+                runtime_env.os.environ["SMART_SELECT_CUDA_HOME"] = str(cuda_home)
+
+                detected = runtime_env._detect_cuda_home()
+            finally:
+                runtime_env.os.environ.clear()
+                runtime_env.os.environ.update(original_environ)
+
+        self.assertEqual(detected, str(cuda_home))
+
+    def test_cuda_build_environment_sets_toolkit_paths(self) -> None:
+        env = runtime_env._cuda_build_environment("/opt/cuda-12.4")
+
+        self.assertEqual(env["CUDA_HOME"], "/opt/cuda-12.4")
+        self.assertIn("/opt/cuda-12.4/bin", env["PATH"])
+        self.assertIn("LD_LIBRARY_PATH", env)
+
+    def test_cuda_build_environment_uses_conda_host_compiler(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cuda_home = Path(temp_dir)
+            (cuda_home / "bin").mkdir()
+            cc = cuda_home / "bin" / "x86_64-conda-linux-gnu-gcc"
+            cxx = cuda_home / "bin" / "x86_64-conda-linux-gnu-g++"
+            cc.write_text("#!/bin/sh\n", encoding="utf-8")
+            cxx.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            env = runtime_env._cuda_build_environment(str(cuda_home))
+
+        self.assertEqual(env["CC"], str(cc))
+        self.assertEqual(env["CXX"], str(cxx))
+        self.assertEqual(env["CUDAHOSTCXX"], str(cxx))
 
 
 if __name__ == "__main__":

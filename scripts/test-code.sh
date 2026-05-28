@@ -24,7 +24,8 @@ cd "$ROOT_DIR"
   worker/smart_select_worker.py \
   python/smart_select/extension.py \
   python/smart_select/worker_launcher.py \
-  python/smart_select/__init__.py
+  python/smart_select/__init__.py \
+  scripts/render-segment-map.py
 
 if ! "$PYTHON" -m mypy --version >/dev/null 2>&1; then
   cat >&2 <<'EOF'

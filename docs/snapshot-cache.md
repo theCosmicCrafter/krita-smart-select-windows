@@ -2,11 +2,13 @@
 
 ## Input Image Rules
 
-MVP сегментирует flattened projection текущего документа по размеру canvas.
+MVP использует flattened projection текущего документа как источник пикселей,
+но основной quality path сегментирует lasso/region crop, а не обязательно всё
+изображение целиком.
 
 Rules:
 
-- Входом является изображение целиком, а не активный слой.
+- Входом является flattened image snapshot и region mask, заданная lasso.
 - Используется flattened projection всех видимых слоёв.
 - Невидимые слои не учитываются.
 - Bounds равны размеру canvas.
@@ -15,18 +17,17 @@ Rules:
 - Alpha/background mask нужно сохранить, чтобы полностью прозрачные области не
   предлагались как selectable segments.
 
-Режимы `sample current layer` и segmentation only active selection являются
-future work.
+Режим `sample current layer` является future work.
 
 ## Cache Scope
 
-Кэш сегментов относится к изображению целиком.
+Кэш lasso selection относится к изображению, region mask и выбранной модели.
+Full-image segment cache остаётся применимым для prepared hover/click spike, но
+не является главным MVP flow.
 
 MVP не пытается отдельно кэшировать:
 
 - активный слой;
-- активное выделение;
-- prompt-based requests;
 - отдельные layer modes.
 
 Segment map, masks и metadata в MVP хранятся в памяти. Дисковый кэш можно
@@ -42,7 +43,8 @@ Segment map, masks и metadata в MVP хранятся в памяти. Диск
 - цветовую модель/depth, если доступно;
 - registry id выбранной модели;
 - версию алгоритма подготовки сегментов;
-- fingerprint изображения.
+- fingerprint изображения;
+- fingerprint/geometry lasso region mask.
 
 ## Exact Fingerprint
 
@@ -52,9 +54,10 @@ downscaled fingerprint, а не hash всех пикселей:
 1. Получить snapshot всего изображения.
 2. Композитить RGB input на белый фон.
 3. Сохранить alpha/background mask.
-4. Downscale RGB input и alpha mask до `128x128`.
-5. Привести к stable RGB/alpha U8 representation.
-6. Посчитать hash bytes.
+4. Сохранить или rasterize lasso region mask.
+5. Downscale RGB input, alpha mask и region mask до `128x128`.
+6. Привести к stable RGB/alpha/region U8 representation.
+7. Посчитать hash bytes.
 
 Для MVP используется exact match по fingerprint string. Так как fingerprint
 downscaled, он не гарантирует обнаружение каждого single-pixel изменения в
@@ -65,6 +68,7 @@ downscaled, он не гарантирует обнаружение каждог
 - Если размер изображения изменился, кэш невалиден.
 - Если model id изменился, кэш невалиден.
 - Если algorithm version изменилась, кэш невалиден.
+- Если lasso region изменилась, кэш невалиден.
 - Если fingerprint совпал, кэш можно использовать.
 - Если fingerprint не совпал, кэш невалиден.
 - Если есть сомнение, кэш нужно инвалидировать и пересчитать сегменты.
@@ -72,14 +76,20 @@ downscaled, он не гарантирует обнаружение каждог
 Runtime rebuild при активном Smart Select debounce-ится на `300 ms`, чтобы
 частые `sigImageUpdated` события не перезапускали worker на каждый update.
 
-Current real inference algorithm version:
+Current implemented full-image real inference algorithm version:
 
 ```text
-sam2.1-auto-mask-v1
+sam2.1-auto-mask-quality-v1
 ```
 
-Эта версия заменила `mock-segments-model-readiness-v1` и намеренно
-инвалидирует in-memory cache, созданный readiness/mock stage.
+Next lasso MVP algorithm version:
+
+```text
+sam2.1-lasso-selection-v1
+```
+
+Переход на lasso workflow намеренно инвалидирует in-memory cache, созданный
+full-image automatic mask stage.
 
 ## Follow-Ups
 

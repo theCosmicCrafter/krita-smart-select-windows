@@ -9,7 +9,8 @@
 - worker protocol;
 - model registry validation;
 - download/cache logic;
-- hit-testing masks;
+- lasso/region mask rasterization;
+- selection mask generation;
 - coordinate mapping;
 - mask combining;
 - error handling and cancellation;
@@ -38,11 +39,11 @@ Manual smoke остаётся нужным для canvas/tool поведения
 
 1. Enable plugin.
 2. Activate Smart Select.
-3. Confirm preparing/ready state in Tool Options.
-4. Hover prepared SAM2 segments.
-5. Confirm red overlay.
-6. Click hovered segment.
-7. Confirm Krita selection.
+3. Draw a lasso/freehand region around an object or object part.
+4. Confirm preparing state in Tool Options.
+5. Confirm result preview appears on canvas.
+6. Confirm Krita selection is applied from the lasso-refined mask.
+7. Repeat with selection modifiers.
 8. Switch tool and reselect Smart Select.
 9. Close Krita without crash.
 
@@ -74,6 +75,9 @@ SMART_SELECT_RUN_SAM2_SMOKE=1 ./scripts/test-sam2-smoke.sh
 It creates a tiny synthetic snapshot, uses the normal worker protocol, writes
 runtime/model caches under Krita user data by default and verifies that the
 worker returns a non-empty segment map.
+
+The current opt-in smoke still exercises the implemented full-image spike. It
+should be updated to cover `prepare_selection` when lasso MVP is implemented.
 
 ## Current Covered Cases
 
@@ -147,4 +151,6 @@ C++ tests cover:
 - Cache key invalidation tests.
 - Worker crash/error tests.
 - Selection modifier mapping tests.
+- Lasso region mask serialization tests.
+- `prepare_selection` request/result tests.
 - Coordinate mapping tests around zoom/pan where feasible.

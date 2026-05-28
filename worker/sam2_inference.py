@@ -12,16 +12,20 @@ from model_registry import ModelSpec
 from runtime_manifest import RUNTIME_VERSION, SAM2_SOURCE_REF
 
 GENERATOR_PARAMS: dict[str, object] = {
-    "points_per_side": 32,
-    "points_per_batch": 32,
+    "points_per_side": 64,
+    "points_per_batch": 128,
     "pred_iou_thresh": 0.80,
-    "stability_score_thresh": 0.92,
+    "stability_score_thresh": 0.95,
     "stability_score_offset": 1.0,
     "box_nms_thresh": 0.7,
-    "crop_n_layers": 0,
-    "crop_n_points_downscale_factor": 2,
+    "crop_n_layers": 1,
+    "crop_nms_thresh": 0.7,
+    "crop_overlap_ratio": 0.3413333333333333,
+    "crop_n_points_downscale_factor": 1,
     "min_mask_region_area": 64,
     "output_mode": "binary_mask",
+    "use_m2m": True,
+    "multimask_output": True,
 }
 
 

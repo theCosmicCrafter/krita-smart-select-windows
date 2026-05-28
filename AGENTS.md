@@ -21,14 +21,18 @@
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files, not JSON.
 - Segment map contract: NumPy `.npy`, dtype `<u2`, shape `[height, width]`,
-  value `0` = background/no segment.
+  value `0` = background/no segment. Lasso MVP may also return a single
+  `uint8` selection mask.
 - Runtime cache for MVP: in-memory only.
 - Current default real model: `sam2.1_hiera_large`.
 - Real model target: SAM2/SAM2.1 PyTorch, curated models only.
-- Current real inference path uses SAM2.1 Large automatic mask generation.
+- Current implemented inference path uses SAM2.1 Large automatic mask
+  generation for the full-image spike.
+- Current MVP product direction is lasso/region-prompted selection, not
+  click-to-select from full-image prepared masks.
 - Runtime venv/cache is managed automatically under Krita user data, not inside
   plugin source.
-- Current algorithm version: `sam2.1-auto-mask-v1`.
+- Current algorithm version: `sam2.1-auto-mask-quality-v1`.
 
 ## Не Переоткрывать Без Причины
 
@@ -38,8 +42,8 @@
 - Do not switch the default model back to Tiny/Small unless the product decision
   is explicitly reopened.
 - Do not install PyTorch/SAM2 into the plugin source tree.
-- Do not add prompt-based selection before the prepared segmentation workflow is
-  stable.
+- Do not reintroduce click-to-select full-image hover as the primary MVP path
+  unless the product decision is explicitly reopened.
 - Do not add GUI automation as an MVP requirement.
 
 ## Typing And Tests

@@ -17,15 +17,16 @@ Krita Vision Tools is useful as a reference for:
 - pixel selection apply through Krita APIs;
 - overlay drawing through `paint()` and `updateCanvas()`;
 - Python loader wrapper for native library.
+- native lasso/selection tool behavior where applicable.
 
 ## What Krita Vision Tools Does Not Answer
 
 Krita Vision Tools does not answer these Krita Smart Select decisions:
 
 - IPC between C++ tool and separate Python/PyTorch worker;
-- prepared automatic segmentation of the whole image;
-- `segment_map` / `pixel -> segment_id` format;
-- hover highlighting of segments in segmentation tool;
+- quality tradeoffs for lasso/region-prompted SAM2 selection;
+- `selection_mask` / `segment_map` result contracts;
+- candidate mask ranking and debug export;
 - segment map/mask cache;
 - SAM2 PyTorch dependency management.
 
@@ -36,6 +37,11 @@ Smart Segments is useful as a reference for:
 - SAM2/PyTorch pipeline;
 - converting model output into masks/segments;
 - connecting segmentation results back to Krita pixels/selections.
+
+InvokeAI is useful as a product/UX reference for prompt-driven SAM selection:
+box/point/prompt inputs tend to produce more controllable masks than one
+full-image automatic segmentation pass. Krita Smart Select uses that direction
+for the MVP lasso workflow, while keeping implementation native to Krita.
 
 ## Attribution
 

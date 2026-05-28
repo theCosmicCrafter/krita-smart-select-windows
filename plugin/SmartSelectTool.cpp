@@ -8,8 +8,8 @@
 #include <QCursor>
 #include <QDebug>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
+#include <QFile>
 #include <QIcon>
 #include <QJsonArray>
 #include <QLabel>
@@ -35,7 +35,7 @@ constexpr int PREPARE_DEBOUNCE_MS = 300;
 
 const QString DEFAULT_MODEL_ID = QStringLiteral("sam2.1_hiera_large");
 const QString DEFAULT_MODEL_TITLE = QStringLiteral("SAM2.1 Large");
-const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-auto-mask-v1");
+const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-auto-mask-quality-v1");
 
 } // namespace
 
@@ -463,6 +463,15 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
 
 void SmartSelectTool::cleanupTempFiles(const QStringList& paths)
 {
+    if (qEnvironmentVariableIsSet("SMART_SELECT_KEEP_DEBUG_FILES")) {
+        for (const QString& path : paths) {
+            if (!path.isEmpty() && QFileInfo::exists(path)) {
+                qInfo() << "[SmartSelect] event=temp_file.kept_for_debug" << "path" << path;
+            }
+        }
+        return;
+    }
+
     for (const QString& path : paths) {
         if (path.isEmpty()) {
             continue;
