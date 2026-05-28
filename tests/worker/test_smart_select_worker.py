@@ -79,7 +79,7 @@ class SmartSelectWorkerTests(unittest.TestCase):
             self.assertEqual(
                 [message.get("stage") for message in messages[:4]],
                 [
-                    "loading_model",
+                    "resolving_model",
                     "reading_image",
                     "generating_segments",
                     "building_hover_index",
@@ -93,6 +93,7 @@ class SmartSelectWorkerTests(unittest.TestCase):
             self.assertTrue(segment_map_path.exists())
             self.assertTrue(segments_path.exists())
             self.assertEqual(len(result["metadata"]), 3)
+            self.assertEqual(result["model"]["id"], "mock")
 
             descr, shape, payload = parse_npy_header(segment_map_path)
             self.assertEqual(descr, "<u2")
@@ -202,6 +203,97 @@ class SmartSelectWorkerTests(unittest.TestCase):
             messages[0]["error"]["message"], "Alpha mask size does not match canvas size"
         )
 
+    def test_prepare_segments_real_model_with_verified_cache_uses_model_stages(self) -> None:
+        output = io.StringIO()
+        cleanup_dir: Path | None = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_root = Path(temp_dir) / "models"
+            model_dir = cache_root / "sam2.1_hiera_large"
+            model_dir.mkdir(parents=True)
+            checkpoint = model_dir / "sam2.1_hiera_large.pt"
+            checkpoint.write_bytes(b"verified")
+            spec = self.worker.ModelSpec(
+                id="sam2.1_hiera_large",
+                title="SAM2.1 Hiera Large",
+                family="sam2.1",
+                checkpoint_url="https://example.invalid/model.pt",
+                checkpoint_filename="sam2.1_hiera_large.pt",
+                config_name="configs/sam2.1/sam2.1_hiera_l.yaml",
+                expected_bytes=8,
+                etag='"etag"',
+                recommended_ram_gb=32,
+                recommended_vram_gb=12,
+                profile="quality",
+                requires_download=True,
+            )
+            original_get_model_spec = self.worker.get_model_spec
+            self.worker.get_model_spec = lambda _model_id: spec
+            try:
+                with contextlib.redirect_stdout(output):
+                    self.worker.handle_prepare_segments(
+                        14,
+                        {
+                            "image_path": "",
+                            "model_cache_dir": str(cache_root),
+                            "model_id": "sam2.1_hiera_large",
+                            "algorithm_version": "mock-segments-model-readiness-v1",
+                            "fingerprint": "fingerprint",
+                            "canvas_width": 32,
+                            "canvas_height": 24,
+                        },
+                    )
+            finally:
+                self.worker.get_model_spec = original_get_model_spec
+
+            messages = [json.loads(line) for line in output.getvalue().splitlines()]
+            cleanup_dir = Path(messages[-1]["result"]["segment_map_path"]).parent
+            try:
+                self.assertEqual(
+                    [message.get("stage") for message in messages[:5]],
+                    [
+                        "resolving_model",
+                        "checking_model_cache",
+                        "verifying_model",
+                        "reading_image",
+                        "generating_segments",
+                    ],
+                )
+                self.assertEqual(messages[-1]["result"]["model"]["id"], "sam2.1_hiera_large")
+                self.assertEqual(messages[-1]["result"]["model"]["checkpoint_bytes"], 8)
+            finally:
+                if cleanup_dir is not None:
+                    shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+    def test_prepare_segments_real_model_without_cache_dir_returns_error(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.worker.handle_prepare_segments(
+                15,
+                {
+                    "model_id": "sam2.1_hiera_large",
+                    "canvas_width": 32,
+                    "canvas_height": 24,
+                },
+            )
+
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(messages[-1]["error"]["type"], "ModelCacheDirMissing")
+
+    def test_prepare_segments_unknown_model_returns_error(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.worker.handle_prepare_segments(
+                16,
+                {
+                    "model_id": "unknown",
+                    "canvas_width": 32,
+                    "canvas_height": 24,
+                },
+            )
+
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(messages[-1]["error"]["type"], "UnknownModel")
+
     def test_handle_request_rejects_non_object_params(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -209,6 +301,22 @@ class SmartSelectWorkerTests(unittest.TestCase):
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(messages[0]["error"]["type"], "InvalidInput")
+
+    def test_diagnostics_request_returns_runtime_info(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir, contextlib.redirect_stdout(output):
+            self.worker.handle_request(
+                {
+                    "id": 17,
+                    "method": "diagnostics",
+                    "params": {"model_cache_dir": temp_dir},
+                }
+            )
+
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(messages[0]["id"], 17)
+        self.assertIn("python", messages[0]["result"])
+        self.assertIn("models", messages[0]["result"])
 
     def test_cancel_request_records_cancelled_job(self) -> None:
         output = io.StringIO()

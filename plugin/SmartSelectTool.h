@@ -105,6 +105,7 @@ private:
     void cleanupTempFiles(const QStringList& paths);
     void clearActiveJobState();
     QString fingerprintPrefix(const QString& fingerprint) const;
+    QString friendlyStageText(const QString& stage) const;
 
     void onWorkerProgress(int id, const QString& stage, double progress, bool hasProgress);
     void onWorkerResult(int id, const QString& segmentMapPath, const QString& segmentsPath,

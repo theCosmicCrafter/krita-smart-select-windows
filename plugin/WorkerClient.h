@@ -2,6 +2,7 @@
 #define SMART_SELECT_WORKER_CLIENT_H_
 
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QObject>
 #include <QProcess>
 #include <QSize>
@@ -13,8 +14,28 @@ struct PrepareSegmentsRequest
     QString modelId;
     QString algorithmVersion;
     QString fingerprint;
+    QString modelCacheDir;
     QSize canvasSize;
 };
+
+inline QJsonObject prepareSegmentsRequestJson(int id, const PrepareSegmentsRequest& request)
+{
+    QJsonObject params;
+    params["image_path"] = request.imagePath;
+    params["alpha_mask_path"] = request.alphaMaskPath;
+    params["model_id"] = request.modelId;
+    params["algorithm_version"] = request.algorithmVersion;
+    params["fingerprint"] = request.fingerprint;
+    params["model_cache_dir"] = request.modelCacheDir;
+    params["canvas_width"] = request.canvasSize.width();
+    params["canvas_height"] = request.canvasSize.height();
+
+    QJsonObject message;
+    message["id"] = id;
+    message["method"] = QStringLiteral("prepare_segments");
+    message["params"] = params;
+    return message;
+}
 
 class WorkerClient : public QObject
 {

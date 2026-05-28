@@ -22,13 +22,18 @@
 - Segment map contract: NumPy `.npy`, dtype `<u2`, shape `[height, width]`,
   value `0` = background/no segment.
 - Runtime cache for MVP: in-memory only.
+- Current default real model: `sam2.1_hiera_large`.
 - Real model target: SAM2/SAM2.1 PyTorch, curated models only.
+- Current worker still returns mock segment maps after model readiness;
+  real SAM2 inference is a later stage.
 
 ## Не Переоткрывать Без Причины
 
 - Do not implement canvas overlay as a floating QWidget or Python-only overlay.
 - Do not pass masks/pixel arrays through JSON.
 - Do not add GGUF/custom models/SAM3 to MVP scope.
+- Do not switch the default model back to Tiny/Small unless the product decision
+  is explicitly reopened.
 - Do not add prompt-based selection before the prepared segmentation workflow is
   stable.
 - Do not add GUI automation as an MVP requirement.

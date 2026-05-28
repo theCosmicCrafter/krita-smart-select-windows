@@ -2,10 +2,12 @@
 #include "../SegmentMap.h"
 #include "../SnapshotFingerprint.h"
 #include "../SnapshotImage.h"
+#include "../WorkerClient.h"
 
 #include <QColor>
 #include <QFile>
 #include <QImage>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
@@ -91,6 +93,7 @@ private Q_SLOTS:
     void snapshotNormalizationDetectsFullyTransparentImage();
     void writeUint8NpyWritesValidHeader();
     void writeUint8NpyRejectsInvalidPayloadSize();
+    void workerPrepareRequestIncludesModelCacheDir();
 };
 
 void SmartSelectCoreTest::loadNpyAcceptsUint16SegmentMap()
@@ -278,6 +281,31 @@ void SmartSelectCoreTest::writeUint8NpyRejectsInvalidPayloadSize()
     QVERIFY(!writeUint8Npy(
         dir.filePath(QStringLiteral("bad.npy")), QSize(3, 2), QByteArray("\x00\x01", 2), &error));
     QCOMPARE(error, QStringLiteral("Invalid uint8 .npy payload size"));
+}
+
+void SmartSelectCoreTest::workerPrepareRequestIncludesModelCacheDir()
+{
+    PrepareSegmentsRequest request;
+    request.imagePath = QStringLiteral("/tmp/input.png");
+    request.alphaMaskPath = QStringLiteral("/tmp/alpha.npy");
+    request.modelId = QStringLiteral("sam2.1_hiera_large");
+    request.algorithmVersion = QStringLiteral("mock-segments-model-readiness-v1");
+    request.fingerprint = QStringLiteral("fingerprint");
+    request.modelCacheDir = QStringLiteral("/tmp/models");
+    request.canvasSize = QSize(64, 48);
+
+    const QJsonObject message = prepareSegmentsRequestJson(12, request);
+    QCOMPARE(message.value(QStringLiteral("id")).toInt(), 12);
+    QCOMPARE(
+        message.value(QStringLiteral("method")).toString(), QStringLiteral("prepare_segments"));
+
+    const QJsonObject params = message.value(QStringLiteral("params")).toObject();
+    QCOMPARE(params.value(QStringLiteral("model_id")).toString(), request.modelId);
+    QCOMPARE(
+        params.value(QStringLiteral("algorithm_version")).toString(), request.algorithmVersion);
+    QCOMPARE(params.value(QStringLiteral("model_cache_dir")).toString(), request.modelCacheDir);
+    QCOMPARE(params.value(QStringLiteral("canvas_width")).toInt(), 64);
+    QCOMPARE(params.value(QStringLiteral("canvas_height")).toInt(), 48);
 }
 
 QTEST_GUILESS_MAIN(SmartSelectCoreTest)

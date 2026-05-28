@@ -12,6 +12,9 @@ TOOLS_CMAKE="$KRITA_SRC/plugins/tools/CMakeLists.txt"
 cd "$ROOT_DIR"
 
 "$PYTHON" -m py_compile \
+  worker/model_cache.py \
+  worker/model_registry.py \
+  worker/runtime_diagnostics.py \
   worker/smart_select_worker.py \
   python/smart_select/extension.py \
   python/smart_select/__init__.py

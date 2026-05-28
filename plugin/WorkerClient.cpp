@@ -6,6 +6,35 @@
 #include <QJsonValue>
 #include <QProcessEnvironment>
 
+namespace
+{
+QProcessEnvironment sanitizedWorkerEnvironment()
+{
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    const QStringList inheritedPythonKeys {
+        QStringLiteral("PYTHONHOME"),
+        QStringLiteral("PYTHONPATH"),
+        QStringLiteral("PYTHONSTARTUP"),
+        QStringLiteral("PYTHONUSERBASE"),
+        QStringLiteral("PYTHONEXECUTABLE"),
+        QStringLiteral("PYTHONSAFEPATH"),
+        QStringLiteral("PYTHONINSPECT"),
+        QStringLiteral("PYTHONBREAKPOINT"),
+        QStringLiteral("PYTHONPLATLIBDIR"),
+    };
+    for (const QString& key : inheritedPythonKeys) {
+        environment.remove(key);
+    }
+
+    // Krita AppImage exports library paths for its embedded Python/runtime. The
+    // worker is intentionally launched with the system Python, so inheriting
+    // those paths can break stdlib modules such as urllib HTTPS support.
+    environment.remove(QStringLiteral("LD_LIBRARY_PATH"));
+    environment.insert(QStringLiteral("PYTHONNOUSERSITE"), QStringLiteral("1"));
+    return environment;
+}
+}
+
 WorkerClient::WorkerClient(QObject *parent)
     : QObject(parent)
 {
@@ -28,6 +57,12 @@ bool WorkerClient::start(const QString& pythonExecutable, const QString& workerS
 
     m_stdoutBuffer.clear();
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
+    m_process.setProcessEnvironment(sanitizedWorkerEnvironment());
+    qInfo() << "[SmartSelect] event=worker.environment.sanitized"
+            << "removedKeys"
+            << QStringList { QStringLiteral("PYTHONHOME"), QStringLiteral("PYTHONPATH"),
+                   QStringLiteral("PYTHONUSERBASE"), QStringLiteral("LD_LIBRARY_PATH") }
+            << "pythonNoUserSite" << true;
     m_process.start(pythonExecutable, QStringList { workerScript });
     if (!m_process.waitForStarted(1000)) {
         Q_EMIT crashed(m_process.errorString());
@@ -51,20 +86,7 @@ void WorkerClient::stop()
 int WorkerClient::prepareSegments(const PrepareSegmentsRequest& prepareRequest)
 {
     const int id = m_nextId++;
-    QJsonObject params;
-    params["image_path"] = prepareRequest.imagePath;
-    params["alpha_mask_path"] = prepareRequest.alphaMaskPath;
-    params["model_id"] = prepareRequest.modelId;
-    params["algorithm_version"] = prepareRequest.algorithmVersion;
-    params["fingerprint"] = prepareRequest.fingerprint;
-    params["canvas_width"] = prepareRequest.canvasSize.width();
-    params["canvas_height"] = prepareRequest.canvasSize.height();
-
-    QJsonObject request;
-    request["id"] = id;
-    request["method"] = "prepare_segments";
-    request["params"] = params;
-    send(request);
+    send(prepareSegmentsRequestJson(id, prepareRequest));
     return id;
 }
 

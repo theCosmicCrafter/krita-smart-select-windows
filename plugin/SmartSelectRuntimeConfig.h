@@ -14,6 +14,7 @@ public:
     QString packageDir() const;
     QString workerScriptPath() const;
     QString pythonExecutable() const;
+    QString modelCacheDir() const;
 
 private:
     SmartSelectRuntimeConfig() = default;

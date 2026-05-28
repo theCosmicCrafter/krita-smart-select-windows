@@ -13,6 +13,10 @@ if [[ ! -d "$DIST_DIR" ]]; then
 fi
 
 mkdir -p "$OUT_DIR"
-tar -C "$DIST_DIR/.." -czf "$OUT_DIR/$PACKAGE_NAME" "$(basename "$DIST_DIR")"
+tar \
+  --exclude='__pycache__' \
+  --exclude='*.pyc' \
+  -C "$DIST_DIR/.." \
+  -czf "$OUT_DIR/$PACKAGE_NAME" \
+  "$(basename "$DIST_DIR")"
 echo "$OUT_DIR/$PACKAGE_NAME"
-

@@ -28,7 +28,7 @@ Shared memory можно рассмотреть позже, если време�
 ### `prepare_segments`
 
 ```json
-{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","model_id":"sam2_hiera_tiny","algorithm_version":"sam2-auto-mask-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768}}
+{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","model_id":"sam2.1_hiera_large","algorithm_version":"mock-segments-model-readiness-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models"}}
 ```
 
 Parameters:
@@ -36,12 +36,27 @@ Parameters:
 - `image_path`: путь к RGB snapshot input.
 - `alpha_mask_path`: путь к `uint8` `.npy` alpha/background mask. Значение `0`
   означает fully transparent/background, значения `1..255` считаются видимыми.
-- `model_id`: registry id модели, например `sam2_hiera_tiny` или `mock`.
+- `model_id`: registry id модели, например `sam2.1_hiera_large` или `mock`.
 - `algorithm_version`: версия алгоритма подготовки segment map.
 - `fingerprint`: fingerprint snapshot-а. Текущий MVP использует downscaled
   `128x128` hash.
 - `canvas_width`: ширина canvas в image pixels.
 - `canvas_height`: высота canvas в image pixels.
+- `model_cache_dir`: writable directory для checkpoint cache. Обязателен для
+  real model ids и может отсутствовать для `mock`.
+
+Текущий readiness-stage использует `model_id="sam2.1_hiera_large"` и
+`algorithm_version="mock-segments-model-readiness-v1"`. Segment map пока mock,
+поэтому будущий SAM2 inference stage должен сменить `algorithm_version`.
+
+### `diagnostics`
+
+```json
+{"id":2,"method":"diagnostics","params":{"model_cache_dir":"/home/user/.local/share/krita/smart_select/models"}}
+```
+
+Возвращает Python/platform/torch/model-cache сведения для будущего Diagnostic
+Report. Этот request не запускает inference и не читает image input.
 
 ### `cancel`
 
@@ -70,15 +85,26 @@ Fields:
 
 Expected MVP stages:
 
-- `loading_model`
+- `resolving_model`
+- `checking_model_cache`
+- `downloading_model`
+- `verifying_model`
 - `reading_image`
 - `generating_segments`
 - `building_hover_index`
 
+`downloading_model` может добавлять extra fields:
+
+```json
+{"id":1,"event":"progress","stage":"downloading_model","progress":0.42,"bytes_done":377194116,"bytes_total":898089053}
+```
+
+C++ может игнорировать unknown fields.
+
 ## Success
 
 ```json
-{"id":1,"result":{"segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[{"id":1,"bbox":[0,0,100,100],"area":10000,"score":1.0}]}}
+{"id":1,"result":{"segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[{"id":1,"bbox":[0,0,100,100],"area":10000,"score":1.0}],"model":{"id":"sam2.1_hiera_large","title":"SAM2.1 Hiera Large","cache_state":"verified","checkpoint_bytes":898089053}}}
 ```
 
 Fields:
@@ -86,6 +112,7 @@ Fields:
 - `segment_map_path`: path to `.npy` label map.
 - `segments_path`: path to `.npz` segment data.
 - `metadata`: segment metadata list.
+- `model`: optional model readiness metadata for logs/diagnostics.
 
 Current MVP rule: C++ authoritative source for hover/click is
 `segment_map.npy`. Worker metadata is useful for logs/UI but must not be
@@ -102,6 +129,14 @@ Fields:
 - `type`: stable machine-readable error type.
 - `message`: short user-safe message.
 - `details_event_id`: optional id for matching the error to full logs.
+
+Expected model readiness error types:
+
+- `UnknownModel`
+- `ModelCacheDirMissing`
+- `ModelDownloadError`
+- `ModelVerificationError`
+- `ModelDownloadCancelled`
 
 ## Segment Map Contract
 
@@ -147,6 +182,7 @@ Optional fields:
 
 ## Current Implementation Status
 
-Current worker implementation generates mock segment maps and masks out fully
-transparent pixels using `alpha_mask_path`. Real SAM2 inference will reuse the
-same protocol and replace mock generation inside the worker.
+Current worker implementation resolves and verifies `sam2.1_hiera_large`, then
+generates mock segment maps and masks out fully transparent pixels using
+`alpha_mask_path`. Real SAM2 inference will reuse the same protocol and replace
+mock generation inside the worker.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import struct
 import sys
 import tempfile
@@ -12,6 +13,26 @@ from array import array
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
+
+WORKER_DIR = Path(__file__).resolve().parent
+if str(WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKER_DIR))
+
+from model_cache import (  # noqa: E402
+    ModelCache,
+    ModelCacheDirMissing,
+    ModelCacheError,
+    ModelDownloadCancelled,
+    ModelDownloadError,
+    ModelVerificationError,
+)
+from model_registry import (  # noqa: E402
+    ModelRegistryError,
+    ModelSpec,
+    default_model_id,
+    get_model_spec,
+)
+from runtime_diagnostics import collect_runtime_diagnostics  # noqa: E402
 
 
 class SegmentMetadata(TypedDict):
@@ -29,6 +50,7 @@ class PrepareSegmentsParams(TypedDict, total=False):
     fingerprint: str
     canvas_width: int
     canvas_height: int
+    model_cache_dir: str
 
 
 JsonObject = dict[str, Any]
@@ -43,6 +65,18 @@ def emit(message: JsonObject) -> None:
 
 def emit_progress(job_id: int, stage: str, progress: float | None = None) -> None:
     emit({"id": job_id, "event": "progress", "stage": stage, "progress": progress})
+
+
+def emit_progress_extra(
+    job_id: int,
+    stage: str,
+    progress: float | None = None,
+    extra: Mapping[str, object] | None = None,
+) -> None:
+    message: JsonObject = {"id": job_id, "event": "progress", "stage": stage, "progress": progress}
+    if extra is not None:
+        message.update(extra)
+    emit(message)
 
 
 def emit_error(job_id: int, error_type: str, message: str) -> None:
@@ -205,6 +239,27 @@ def write_segments_npz(path: str | Path, metadata: Sequence[SegmentMetadata]) ->
         archive.writestr("scores.npy", npy_bytes("<f8", (len(ids),), pack_float64(scores)))
 
 
+def error_type_for_model_cache_error(error: ModelCacheError) -> str:
+    if isinstance(error, ModelCacheDirMissing):
+        return "ModelCacheDirMissing"
+    if isinstance(error, ModelDownloadError):
+        return "ModelDownloadError"
+    if isinstance(error, ModelVerificationError):
+        return "ModelVerificationError"
+    if isinstance(error, ModelDownloadCancelled):
+        return "ModelDownloadCancelled"
+    return error.__class__.__name__
+
+
+def model_result_payload(spec: ModelSpec, cache_status_actual_bytes: int | None) -> JsonObject:
+    return {
+        "id": spec.id,
+        "title": spec.title,
+        "cache_state": "verified",
+        "checkpoint_bytes": cache_status_actual_bytes,
+    }
+
+
 def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
     width_value = params.get("canvas_width", 512)
     height_value = params.get("canvas_height", 512)
@@ -240,10 +295,50 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
             emit_error(job_id, "InvalidInput", "Alpha mask size does not match canvas size")
             return
 
-    emit_progress(job_id, "loading_model")
-    time.sleep(0.03)
+    emit_progress(job_id, "resolving_model")
+    model_id_value = params.get("model_id", default_model_id())
+    model_id = (
+        model_id_value if isinstance(model_id_value, str) and model_id_value else default_model_id()
+    )
+    try:
+        model_spec = get_model_spec(model_id)
+    except ModelRegistryError:
+        emit_error(job_id, "UnknownModel", "unknown model")
+        return
     if job_id in cancelled_jobs:
         return
+
+    cache_status_actual_bytes: int | None = None
+    if model_spec.requires_download:
+        model_cache_dir_value = params.get("model_cache_dir")
+        if not isinstance(model_cache_dir_value, str) or not model_cache_dir_value:
+            emit_error(job_id, "ModelCacheDirMissing", "model cache is not writable")
+            return
+
+        emit_progress(job_id, "checking_model_cache")
+        model_cache = ModelCache(Path(model_cache_dir_value))
+
+        def progress_callback(
+            stage: str, progress: float | None, extra: Mapping[str, object]
+        ) -> None:
+            emit_progress_extra(job_id, stage, progress, extra)
+
+        try:
+            cache_status = model_cache.ensure_downloaded(
+                model_spec,
+                progress_callback,
+                lambda: job_id in cancelled_jobs,
+            )
+        except ModelDownloadCancelled:
+            return
+        except ModelCacheError as exc:
+            emit_error(job_id, error_type_for_model_cache_error(exc), str(exc))
+            return
+
+        emit_progress(job_id, "verifying_model")
+        cache_status_actual_bytes = cache_status.actual_bytes
+        if job_id in cancelled_jobs:
+            return
 
     emit_progress(job_id, "reading_image")
     time.sleep(0.03)
@@ -264,8 +359,15 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
     segment_map_path = temp_dir / "segment_map.npy"
     segments_path = temp_dir / "segments.npz"
 
-    write_npy(segment_map_path, "<u2", (height, width), pack_uint16(segment_map))
-    write_segments_npz(segments_path, metadata)
+    try:
+        write_npy(segment_map_path, "<u2", (height, width), pack_uint16(segment_map))
+        write_segments_npz(segments_path, metadata)
+        if job_id in cancelled_jobs:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
 
     emit(
         {
@@ -274,6 +376,7 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
                 "segment_map_path": str(segment_map_path),
                 "segments_path": str(segments_path),
                 "metadata": metadata,
+                "model": model_result_payload(model_spec, cache_status_actual_bytes),
             },
         }
     )
@@ -294,6 +397,14 @@ def handle_request(request: Mapping[str, Any]) -> None:
     elif method == "cancel":
         cancelled_jobs.add(int(params_value.get("job_id") or 0))
         emit({"id": job_id, "result": {"cancelled": True}})
+    elif method == "diagnostics":
+        model_cache_dir_value = params_value.get("model_cache_dir")
+        model_cache_dir = (
+            Path(model_cache_dir_value)
+            if isinstance(model_cache_dir_value, str) and model_cache_dir_value
+            else None
+        )
+        emit({"id": job_id, "result": collect_runtime_diagnostics(model_cache_dir)})
     else:
         emit_error(job_id, "UnknownMethod", f"Unsupported method: {method}")
 

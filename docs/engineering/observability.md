@@ -39,6 +39,12 @@
 - `setup.failed`
 - `model.download.start`
 - `model.download.failed`
+- `model.download.progress`
+- `model.download.retry`
+- `model.download.result`
+- `model.cache.path`
+- `model.cache.failed`
+- `worker.environment.sanitized`
 - `worker.start`
 - `worker.crashed`
 - `inference.start`
@@ -48,6 +54,21 @@
 
 Stable event names важнее красивого текста. User-facing message может быть
 отдельным полем.
+
+Worker-side failure events must include enough non-sensitive detail to debug
+the root cause without reproducing immediately. In particular,
+`model.download.failed` must include:
+
+- `model_id`;
+- stable `error_type`;
+- short `reason` / exception representation.
+
+`model.download.retry` should include the same failure shape plus the retry
+attempt and requested byte range. This keeps transient network failures visible
+without turning them into user-facing errors.
+
+The `reason` must not include tokens, environment variables, image paths,
+document paths, pixel data or masks.
 
 ## Diagnostic Report
 

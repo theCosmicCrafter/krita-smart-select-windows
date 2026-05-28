@@ -14,7 +14,8 @@ Krita Smart Select - плагин для Krita, который помогает 
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files.
 - Current implementation: canvas spike, worker-backed mock segmentation,
-  flattened snapshot export, alpha mask handling and in-memory cache reuse.
+  flattened snapshot export, alpha mask handling, in-memory cache reuse,
+  SAM2.1 Large registry/download/cache verification and diagnostics foundation.
 - Not implemented yet: SAM2 inference.
 
 ## Где Что Искать

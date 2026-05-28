@@ -66,10 +66,24 @@ The script runs:
 
 Python worker tests cover:
 
+- model registry default is `sam2.1_hiera_large`;
+- SAM2.1 Large registry metadata is stable;
+- model cache reuses verified files without network calls;
+- model cache downloads through `.partial` and writes `model.json`;
+- model cache resumes partial downloads when ranges are supported;
+- model cache restarts when resume is not supported;
+- model cache preserves partial files on cancellation;
+- model download failures log stable error type and short reason to stderr;
+- runtime diagnostics succeeds without torch installed;
+- runtime diagnostics reports model cache state;
 - fake segmentation creates 3 segments;
 - segment metadata is produced;
 - generated segment map is hit-testable;
 - `prepare_segments` emits progress events;
+- real model readiness with a pre-seeded verified cache emits model stages;
+- missing real model cache dir is rejected;
+- unknown model id is rejected;
+- `diagnostics` request returns runtime info;
 - worker writes valid `.npy <u2`;
 - `.npy` shape is `[height, width]`;
 - worker reads valid `uint8` alpha masks;
@@ -102,12 +116,11 @@ C++ tests cover:
 - fully transparent snapshots are detected;
 - `writeUint8Npy()` writes valid NumPy headers;
 - `writeUint8Npy()` rejects wrong payload sizes.
+- `prepare_segments` request serialization includes `model_cache_dir`.
 
 ## Future Test Additions
 
 - Cache key invalidation tests.
-- ModelRegistry validation tests.
-- Model download/cache tests.
 - SAM2 result conversion tests.
 - Worker crash/error tests.
 - Selection modifier mapping tests.

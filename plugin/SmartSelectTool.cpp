@@ -33,8 +33,9 @@ namespace
 
 constexpr int PREPARE_DEBOUNCE_MS = 300;
 
-const QString MOCK_MODEL_ID = QStringLiteral("mock");
-const QString ALGORITHM_VERSION = QStringLiteral("mock-worker-snapshot-v1");
+const QString DEFAULT_MODEL_ID = QStringLiteral("sam2.1_hiera_large");
+const QString DEFAULT_MODEL_TITLE = QStringLiteral("SAM2.1 Large");
+const QString ALGORITHM_VERSION = QStringLiteral("mock-segments-model-readiness-v1");
 
 } // namespace
 
@@ -161,7 +162,7 @@ void SmartSelectTool::prepareSegments()
 
     const SegmentCacheKey cacheKey {
         snapshot.canvasSize,
-        MOCK_MODEL_ID,
+        DEFAULT_MODEL_ID,
         ALGORITHM_VERSION,
         snapshot.fingerprint,
     };
@@ -268,12 +269,28 @@ void SmartSelectTool::startPrepareJob(const SegmentCacheKey& cacheKey, const QSt
     }
 
     const QRect bounds = currentImage()->bounds();
+    const SmartSelectRuntimeConfig& config = SmartSelectRuntimeConfig::instance();
+    const QString modelCacheDir = config.modelCacheDir();
+    if (modelCacheDir.isEmpty() || !QDir().mkpath(modelCacheDir)
+        || !QFileInfo(modelCacheDir).isWritable()) {
+        qWarning() << "[SmartSelect] event=model.cache.failed"
+                   << "reason=model_cache_not_writable"
+                   << "modelCacheDir" << modelCacheDir;
+        cleanupTempFiles(cleanupPaths);
+        setState(State::Error, i18n("model cache is not writable"));
+        return;
+    }
+
+    qInfo() << "[SmartSelect] event=model.cache.path"
+            << "modelCacheDir" << modelCacheDir;
+
     PrepareSegmentsRequest request;
     request.imagePath = imagePath;
     request.alphaMaskPath = alphaMaskPath;
     request.modelId = cacheKey.modelId;
     request.algorithmVersion = cacheKey.algorithmVersion;
     request.fingerprint = cacheKey.fingerprint;
+    request.modelCacheDir = modelCacheDir;
     request.canvasSize = bounds.size();
 
     m_activeJobId = m_worker->prepareSegments(request);
@@ -330,10 +347,10 @@ void SmartSelectTool::updateOptionsUi()
             break;
         case State::Preparing:
             text = m_stageText.isEmpty() ? i18n("Preparing smart segments...")
-                                         : i18n("Preparing smart segments: %1", m_stageText);
+                                         : friendlyStageText(m_stageText);
             break;
         case State::Ready:
-            text = i18n("Smart Select: %1 segments", m_segmentMap.segmentCount());
+            text = i18n("%1: %2 segments", DEFAULT_MODEL_TITLE, m_segmentMap.segmentCount());
             break;
         case State::Error:
             text = i18n("Smart Select error: %1", m_errorMessage);
@@ -379,6 +396,32 @@ void SmartSelectTool::clearActiveJobState()
 QString SmartSelectTool::fingerprintPrefix(const QString& fingerprint) const
 {
     return fingerprint.left(12);
+}
+
+QString SmartSelectTool::friendlyStageText(const QString& stage) const
+{
+    if (stage == QStringLiteral("resolving_model")) {
+        return i18n("Preparing model...");
+    }
+    if (stage == QStringLiteral("checking_model_cache")) {
+        return i18n("Checking model cache...");
+    }
+    if (stage == QStringLiteral("downloading_model")) {
+        return i18n("Downloading SAM2.1 Large...");
+    }
+    if (stage == QStringLiteral("verifying_model")) {
+        return i18n("Verifying SAM2.1 Large...");
+    }
+    if (stage == QStringLiteral("reading_image")) {
+        return i18n("Reading image...");
+    }
+    if (stage == QStringLiteral("generating_segments")) {
+        return i18n("Preparing smart segments...");
+    }
+    if (stage == QStringLiteral("building_hover_index")) {
+        return i18n("Building hover map...");
+    }
+    return stage;
 }
 
 void SmartSelectTool::cleanupTempFiles(const QStringList& paths)

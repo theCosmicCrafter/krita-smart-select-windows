@@ -41,3 +41,13 @@ QString SmartSelectRuntimeConfig::pythonExecutable() const
 
     return QStandardPaths::findExecutable(QStringLiteral("python3"));
 }
+
+QString SmartSelectRuntimeConfig::modelCacheDir() const
+{
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty()) {
+        base = QDir::homePath() + QStringLiteral("/.local/share/krita-smart-select");
+    }
+
+    return QDir(base).filePath(QStringLiteral("smart_select/models"));
+}
