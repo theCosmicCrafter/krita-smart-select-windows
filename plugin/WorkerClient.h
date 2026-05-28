@@ -14,21 +14,20 @@ public:
     explicit WorkerClient(QObject *parent = nullptr);
     ~WorkerClient() override;
 
-    bool start(const QString &pythonExecutable, const QString &workerScript);
+    bool start(const QString& pythonExecutable, const QString& workerScript);
     void stop();
 
-    int prepareSegments(const QString &imagePath,
-                        const QString &modelId,
-                        const QString &fingerprint,
-                        const QSize &canvasSize);
+    int prepareSegments(const QString& imagePath, const QString& modelId,
+        const QString& fingerprint, const QSize& canvasSize);
     void cancel(int jobId);
 
 Q_SIGNALS:
-    void progress(int id, const QString &stage, double progress, bool hasProgress);
-    void result(int id, const QString &segmentMapPath, const QString &segmentsPath, const QJsonArray &metadata);
-    void error(int id, const QString &type, const QString &message);
-    void stderrLine(const QString &line);
-    void crashed(const QString &message);
+    void progress(int id, const QString& stage, double progress, bool hasProgress);
+    void result(int id, const QString& segmentMapPath, const QString& segmentsPath,
+        const QJsonArray& metadata);
+    void error(int id, const QString& type, const QString& message);
+    void stderrLine(const QString& line);
+    void crashed(const QString& message);
 
 private Q_SLOTS:
     void readStdout();
@@ -36,8 +35,8 @@ private Q_SLOTS:
     void processFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
 private:
-    void send(const QJsonObject &message);
-    void handleMessage(const QJsonObject &message);
+    void send(const QJsonObject& message);
+    void handleMessage(const QJsonObject& message);
 
     QProcess m_process;
     QByteArray m_stdoutBuffer;
@@ -45,4 +44,3 @@ private:
 };
 
 #endif // SMART_SELECT_WORKER_CLIENT_H_
-

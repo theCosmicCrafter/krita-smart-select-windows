@@ -30,6 +30,22 @@ EOF
   exit 2
 fi
 
+if ! "$PYTHON" -m ruff --version >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+ruff is not installed.
+
+Install development dependencies first, for example:
+  uv venv .venv
+  uv pip install --python .venv/bin/python -r requirements-dev.txt
+  PYTHON=.venv/bin/python ./scripts/test-code.sh
+
+Or run this script from an environment where `$PYTHON -m ruff` is available.
+EOF
+  exit 2
+fi
+
+"$PYTHON" -m ruff format --check python worker tests
+"$PYTHON" -m ruff check python worker tests
 "$PYTHON" -m mypy
 
 "$PYTHON" -m unittest discover -s tests/worker -p 'test_*.py'

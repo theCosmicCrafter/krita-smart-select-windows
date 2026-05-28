@@ -8,3 +8,27 @@ files = [
     "worker",
     "python/smart_select",
 ]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = [
+    "python",
+    "tests",
+    "worker",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

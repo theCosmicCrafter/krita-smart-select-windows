@@ -12,11 +12,8 @@
 namespace
 {
 
-QByteArray makeNpy(const QByteArray &descr,
-                   int height,
-                   int width,
-                   const QVector<quint16> &values,
-                   bool fortranOrder = false)
+QByteArray makeNpy(const QByteArray& descr, int height, int width, const QVector<quint16>& values,
+    bool fortranOrder = false)
 {
     QByteArray payload;
     payload.reserve(values.size() * int(sizeof(quint16)));
@@ -26,9 +23,8 @@ QByteArray makeNpy(const QByteArray &descr,
     }
 
     QByteArray header = "{'descr': '" + descr
-        + "', 'fortran_order': " + (fortranOrder ? "True" : "False")
-        + ", 'shape': (" + QByteArray::number(height)
-        + ", " + QByteArray::number(width) + "), }";
+        + "', 'fortran_order': " + (fortranOrder ? "True" : "False") + ", 'shape': ("
+        + QByteArray::number(height) + ", " + QByteArray::number(width) + "), }";
     const int padding = 16 - ((10 + header.size() + 1) % 16);
     header.append(QByteArray(padding, ' '));
     header.append('\n');
@@ -43,7 +39,7 @@ QByteArray makeNpy(const QByteArray &descr,
     return bytes;
 }
 
-QString writeTempFile(QTemporaryDir &dir, const QByteArray &bytes)
+QString writeTempFile(QTemporaryDir& dir, const QByteArray& bytes)
 {
     QTemporaryFile file(dir.filePath(QStringLiteral("segment_map_XXXXXX.npy")));
     file.setAutoRemove(false);
@@ -58,10 +54,19 @@ QString writeTempFile(QTemporaryDir &dir, const QByteArray &bytes)
 
 QVector<quint16> samplePixels()
 {
-    return QVector<quint16>{
-        0, 1, 1, 0,
-        0, 2, 0, 0,
-        3, 3, 0, 0,
+    return QVector<quint16> {
+        0,
+        1,
+        1,
+        0,
+        0,
+        2,
+        0,
+        0,
+        3,
+        3,
+        0,
+        0,
     };
 }
 

@@ -12,7 +12,6 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 WORKER_PATH = ROOT_DIR / "worker" / "smart_select_worker.py"
 
@@ -72,12 +71,15 @@ class SmartSelectWorkerTests(unittest.TestCase):
                 )
 
             messages = [json.loads(line) for line in output.getvalue().splitlines()]
-            self.assertEqual([message.get("stage") for message in messages[:4]], [
-                "loading_model",
-                "reading_image",
-                "generating_segments",
-                "building_hover_index",
-            ])
+            self.assertEqual(
+                [message.get("stage") for message in messages[:4]],
+                [
+                    "loading_model",
+                    "reading_image",
+                    "generating_segments",
+                    "building_hover_index",
+                ],
+            )
 
             result = messages[-1]["result"]
             segment_map_path = Path(result["segment_map_path"])
@@ -101,15 +103,18 @@ class SmartSelectWorkerTests(unittest.TestCase):
             self.worker.handle_prepare_segments(8, {"canvas_width": 0, "canvas_height": 24})
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
-        self.assertEqual(messages, [
-            {
-                "id": 8,
-                "error": {
-                    "type": "InvalidInput",
-                    "message": "Canvas size is invalid",
-                },
-            }
-        ])
+        self.assertEqual(
+            messages,
+            [
+                {
+                    "id": 8,
+                    "error": {
+                        "type": "InvalidInput",
+                        "message": "Canvas size is invalid",
+                    },
+                }
+            ],
+        )
 
     def test_handle_request_rejects_non_object_params(self) -> None:
         output = io.StringIO()

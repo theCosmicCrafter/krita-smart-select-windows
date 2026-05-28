@@ -1,17 +1,18 @@
 #include "WorkerClient.h"
 
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QProcessEnvironment>
-#include <QDebug>
 
 WorkerClient::WorkerClient(QObject *parent)
     : QObject(parent)
 {
     connect(&m_process, SIGNAL(readyReadStandardOutput()), this, SLOT(readStdout()));
     connect(&m_process, SIGNAL(readyReadStandardError()), this, SLOT(readStderr()));
-    connect(&m_process, SIGNAL(finished(int,QProcess::ExitStatus)), this, SLOT(processFinished(int,QProcess::ExitStatus)));
+    connect(&m_process, SIGNAL(finished(int, QProcess::ExitStatus)), this,
+        SLOT(processFinished(int, QProcess::ExitStatus)));
 }
 
 WorkerClient::~WorkerClient()
@@ -19,7 +20,7 @@ WorkerClient::~WorkerClient()
     stop();
 }
 
-bool WorkerClient::start(const QString &pythonExecutable, const QString &workerScript)
+bool WorkerClient::start(const QString& pythonExecutable, const QString& workerScript)
 {
     if (m_process.state() != QProcess::NotRunning) {
         return true;
@@ -27,7 +28,7 @@ bool WorkerClient::start(const QString &pythonExecutable, const QString &workerS
 
     m_stdoutBuffer.clear();
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
-    m_process.start(pythonExecutable, QStringList{workerScript});
+    m_process.start(pythonExecutable, QStringList { workerScript });
     if (!m_process.waitForStarted(1000)) {
         Q_EMIT crashed(m_process.errorString());
         return false;
@@ -47,10 +48,8 @@ void WorkerClient::stop()
     }
 }
 
-int WorkerClient::prepareSegments(const QString &imagePath,
-                                  const QString &modelId,
-                                  const QString &fingerprint,
-                                  const QSize &canvasSize)
+int WorkerClient::prepareSegments(const QString& imagePath, const QString& modelId,
+    const QString& fingerprint, const QSize& canvasSize)
 {
     const int id = m_nextId++;
     QJsonObject params;
@@ -108,7 +107,7 @@ void WorkerClient::readStdout()
 void WorkerClient::readStderr()
 {
     const QList<QByteArray> lines = m_process.readAllStandardError().split('\n');
-    for (const QByteArray &line : lines) {
+    for (const QByteArray& line : lines) {
         const QString text = QString::fromUtf8(line).trimmed();
         if (!text.isEmpty()) {
             Q_EMIT stderrLine(text);
@@ -123,10 +122,11 @@ void WorkerClient::processFinished(int exitCode, QProcess::ExitStatus exitStatus
     }
 }
 
-void WorkerClient::send(const QJsonObject &message)
+void WorkerClient::send(const QJsonObject& message)
 {
     if (m_process.state() != QProcess::Running) {
-        Q_EMIT error(message.value("id").toInt(), "WorkerNotRunning", "Smart Select worker is not running");
+        Q_EMIT error(
+            message.value("id").toInt(), "WorkerNotRunning", "Smart Select worker is not running");
         return;
     }
 
@@ -134,32 +134,27 @@ void WorkerClient::send(const QJsonObject &message)
     m_process.write(payload);
 }
 
-void WorkerClient::handleMessage(const QJsonObject &message)
+void WorkerClient::handleMessage(const QJsonObject& message)
 {
     const int id = message.value("id").toInt();
     if (message.contains("event") && message.value("event").toString() == "progress") {
         const QJsonValue progressValue = message.value("progress");
-        Q_EMIT progress(id,
-                        message.value("stage").toString(),
-                        progressValue.isDouble() ? progressValue.toDouble() : 0.0,
-                        progressValue.isDouble());
+        Q_EMIT progress(id, message.value("stage").toString(),
+            progressValue.isDouble() ? progressValue.toDouble() : 0.0, progressValue.isDouble());
         return;
     }
 
     if (message.contains("result")) {
         const QJsonObject resultObject = message.value("result").toObject();
-        Q_EMIT result(id,
-                      resultObject.value("segment_map_path").toString(),
-                      resultObject.value("segments_path").toString(),
-                      resultObject.value("metadata").toArray());
+        Q_EMIT result(id, resultObject.value("segment_map_path").toString(),
+            resultObject.value("segments_path").toString(),
+            resultObject.value("metadata").toArray());
         return;
     }
 
     if (message.contains("error")) {
         const QJsonObject errorObject = message.value("error").toObject();
-        Q_EMIT error(id,
-                     errorObject.value("type").toString("WorkerError"),
-                     errorObject.value("message").toString("Smart Select worker failed"));
+        Q_EMIT error(id, errorObject.value("type").toString("WorkerError"),
+            errorObject.value("message").toString("Smart Select worker failed"));
     }
 }
-

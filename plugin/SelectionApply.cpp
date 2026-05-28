@@ -16,7 +16,7 @@
 namespace
 {
 
-void adjustSelection(KisPixelSelectionSP const &selection, int grow, int feather, bool antiAlias)
+void adjustSelection(KisPixelSelectionSP const& selection, int grow, int feather, bool antiAlias)
 {
     if (grow > 0) {
         KisGrowSelectionFilter filter(grow, grow);
@@ -28,7 +28,8 @@ void adjustSelection(KisPixelSelectionSP const &selection, int grow, int feather
 
     if (feather > 0) {
         KisFeatherSelectionFilter filter(feather);
-        filter.process(selection, selection->selectedRect().adjusted(-feather, -feather, feather, feather));
+        filter.process(
+            selection, selection->selectedRect().adjusted(-feather, -feather, feather, feather));
     } else if (antiAlias) {
         KisAntiAliasSelectionFilter filter;
         filter.process(selection, selection->selectedRect());
@@ -37,15 +38,9 @@ void adjustSelection(KisPixelSelectionSP const &selection, int grow, int feather
 
 } // namespace
 
-bool applySegmentSelection(KoCanvasBase *canvas,
-                           KisImageSP image,
-                           KisNodeSP node,
-                           const SegmentMap &segmentMap,
-                           quint16 segmentId,
-                           SelectionAction action,
-                           int grow,
-                           int feather,
-                           bool antiAlias)
+bool applySegmentSelection(KoCanvasBase *canvas, KisImageSP image, KisNodeSP node,
+    const SegmentMap& segmentMap, quint16 segmentId, SelectionAction action, int grow, int feather,
+    bool antiAlias)
 {
     KisCanvas2 *kisCanvas = dynamic_cast<KisCanvas2 *>(canvas);
     if (!kisCanvas || !image || segmentId == 0) {
@@ -59,21 +54,18 @@ bool applySegmentSelection(KoCanvasBase *canvas,
     }
 
     KisPaintDeviceSP defaultDevice = image->projection();
-    KisPixelSelectionSP selection = new KisPixelSelection(new KisSelectionDefaultBounds(defaultDevice));
+    KisPixelSelectionSP selection
+        = new KisPixelSelection(new KisSelectionDefaultBounds(defaultDevice));
     selection->writeBytes(reinterpret_cast<const quint8 *>(mask.constData()), maskBounds);
     adjustSelection(selection, grow, feather, antiAlias);
     selection->invalidateOutlineCache();
 
     KisCursorOverrideLock cursorLock(KisCursor::waitCursor());
-    KisProcessingApplicator applicator(image,
-                                       node,
-                                       KisProcessingApplicator::NO_IMAGE_UPDATES,
-                                       KisImageSignalVector(),
-                                       kundo2_i18n("Smart Select"));
+    KisProcessingApplicator applicator(image, node, KisProcessingApplicator::NO_IMAGE_UPDATES,
+        KisImageSignalVector(), kundo2_i18n("Smart Select"));
 
     KisSelectionToolHelper helper(kisCanvas, kundo2_i18n("Smart Select"));
     helper.selectPixelSelection(applicator, selection, action);
     applicator.end();
     return true;
 }
-

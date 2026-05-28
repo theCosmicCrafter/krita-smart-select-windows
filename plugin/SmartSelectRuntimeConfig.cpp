@@ -3,18 +3,18 @@
 #include <QDir>
 #include <QStandardPaths>
 
-SmartSelectRuntimeConfig &SmartSelectRuntimeConfig::instance()
+SmartSelectRuntimeConfig& SmartSelectRuntimeConfig::instance()
 {
     static SmartSelectRuntimeConfig config;
     return config;
 }
 
-void SmartSelectRuntimeConfig::setPackageDir(const QString &path)
+void SmartSelectRuntimeConfig::setPackageDir(const QString& path)
 {
     m_packageDir = QDir::cleanPath(path);
 }
 
-void SmartSelectRuntimeConfig::setPythonExecutable(const QString &path)
+void SmartSelectRuntimeConfig::setPythonExecutable(const QString& path)
 {
     m_pythonExecutable = QDir::cleanPath(path);
 }

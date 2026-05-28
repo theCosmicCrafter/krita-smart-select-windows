@@ -11,7 +11,7 @@ class SmartSelectPlugin : public QObject
     Q_OBJECT
 
 public:
-    SmartSelectPlugin(QObject *parent, const QVariantList &args);
+    SmartSelectPlugin(QObject *parent, const QVariantList& args);
     ~SmartSelectPlugin() override;
 
     void injectTools();
@@ -21,4 +21,3 @@ private:
 };
 
 #endif // SMART_SELECT_PLUGIN_H_
-

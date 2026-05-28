@@ -22,7 +22,7 @@ public:
     ~SmartSelectTool() override;
 
     QWidget *createOptionWidget() override;
-    void paint(QPainter &painter, const KoViewConverter &converter) override;
+    void paint(QPainter& painter, const KoViewConverter& converter) override;
 
     void mouseMoveEvent(KoPointerEvent *event) override;
     void beginPrimaryAction(KoPointerEvent *event) override;
@@ -46,15 +46,16 @@ protected:
     }
 
 public Q_SLOTS:
-    void activate(const QSet<KoShape *> &shapes) override;
+    void activate(const QSet<KoShape *>& shapes) override;
     void deactivate() override;
-    void updateImage(QRect const &rect);
+    void updateImage(QRect const& rect);
 
 protected:
     using KisToolSelectBase::m_widgetHelper;
 
 private:
-    enum class State {
+    enum class State
+    {
         Idle,
         Preparing,
         Ready,
@@ -66,16 +67,17 @@ private:
     bool startWorkerIfNeeded();
     void startMockPrepareJob();
     void cancelActiveJob();
-    void setState(State state, const QString &message = QString());
+    void setState(State state, const QString& message = QString());
     void updateOptionsUi();
     void clearPreparedData();
-    void cleanupTempFiles(const QStringList &paths);
+    void cleanupTempFiles(const QStringList& paths);
 
-    void onWorkerProgress(int id, const QString &stage, double progress, bool hasProgress);
-    void onWorkerResult(int id, const QString &segmentMapPath, const QString &segmentsPath, const QJsonArray &metadata);
-    void onWorkerError(int id, const QString &type, const QString &message);
-    void onWorkerStderr(const QString &line);
-    void onWorkerCrashed(const QString &message);
+    void onWorkerProgress(int id, const QString& stage, double progress, bool hasProgress);
+    void onWorkerResult(int id, const QString& segmentMapPath, const QString& segmentsPath,
+        const QJsonArray& metadata);
+    void onWorkerError(int id, const QString& type, const QString& message);
+    void onWorkerStderr(const QString& line);
+    void onWorkerCrashed(const QString& message);
 
     void setHoverSegment(quint16 segmentId);
     void requestSegmentUpdate(quint16 segmentId);

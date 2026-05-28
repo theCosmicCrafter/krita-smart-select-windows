@@ -6,10 +6,10 @@
 class SmartSelectRuntimeConfig
 {
 public:
-    static SmartSelectRuntimeConfig &instance();
+    static SmartSelectRuntimeConfig& instance();
 
-    void setPackageDir(const QString &path);
-    void setPythonExecutable(const QString &path);
+    void setPackageDir(const QString& path);
+    void setPythonExecutable(const QString& path);
 
     QString packageDir() const;
     QString workerScriptPath() const;

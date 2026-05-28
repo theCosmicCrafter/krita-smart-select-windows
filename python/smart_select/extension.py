@@ -55,7 +55,9 @@ class SmartSelectExtension(Extension):
                     flush=True,
                 )
                 self._library = ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
-                load_with_runtime = getattr(self._library, "load_smart_select_plugin_with_runtime", None)
+                load_with_runtime = getattr(
+                    self._library, "load_smart_select_plugin_with_runtime", None
+                )
                 if load_with_runtime:
                     load_with_runtime.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
                     load_with_runtime.restype = None
@@ -70,5 +72,8 @@ class SmartSelectExtension(Extension):
                 return
 
         names = ", ".join(str(path) for path in candidates)
-        print(f"[SmartSelect] event=setup.failed reason=native_library_not_found checked={names}", flush=True)
+        print(
+            f"[SmartSelect] event=setup.failed reason=native_library_not_found checked={names}",
+            flush=True,
+        )
         raise RuntimeError(f"Smart Select native library was not found. Checked: {names}")

@@ -8,9 +8,10 @@
 #include <QDebug>
 #include <kpluginfactory.h>
 
-K_PLUGIN_FACTORY_WITH_JSON(SmartSelectPluginFactory, "smartselect.json", registerPlugin<SmartSelectPlugin>();)
+K_PLUGIN_FACTORY_WITH_JSON(
+    SmartSelectPluginFactory, "smartselect.json", registerPlugin<SmartSelectPlugin>();)
 
-SmartSelectPlugin::SmartSelectPlugin(QObject *parent, const QVariantList &)
+SmartSelectPlugin::SmartSelectPlugin(QObject *parent, const QVariantList&)
     : QObject(parent)
 {
     auto addTool = [this](KoToolFactoryBase *toolFactory) {
@@ -30,7 +31,7 @@ void SmartSelectPlugin::injectTools()
     KoToolRegistry *registry = KoToolRegistry::instance();
     KoToolManager::Private *p = KoToolManager::instance()->priv();
 
-    for (const QString &id : registry->keys()) {
+    for (const QString& id : registry->keys()) {
         if (m_toolIds.contains(id)) {
             qInfo() << "[SmartSelect] event=setup.tool_action.inject"
                     << "toolId" << id;
@@ -41,14 +42,17 @@ void SmartSelectPlugin::injectTools()
 
 extern "C" {
 
-Q_DECL_EXPORT void load_smart_select_plugin_with_runtime(const char *packageDir, const char *pythonExecutable)
+Q_DECL_EXPORT void load_smart_select_plugin_with_runtime(
+    const char *packageDir, const char *pythonExecutable)
 {
-    SmartSelectRuntimeConfig::instance().setPackageDir(QString::fromUtf8(packageDir ? packageDir : ""));
-    SmartSelectRuntimeConfig::instance().setPythonExecutable(QString::fromUtf8(pythonExecutable ? pythonExecutable : ""));
+    SmartSelectRuntimeConfig::instance().setPackageDir(
+        QString::fromUtf8(packageDir ? packageDir : ""));
+    SmartSelectRuntimeConfig::instance().setPythonExecutable(
+        QString::fromUtf8(pythonExecutable ? pythonExecutable : ""));
     qInfo() << "[SmartSelect] event=setup.native_runtime"
-            << "packageDir" << SmartSelectRuntimeConfig::instance().packageDir()
-            << "workerScript" << SmartSelectRuntimeConfig::instance().workerScriptPath()
-            << "pythonExecutable" << SmartSelectRuntimeConfig::instance().pythonExecutable();
+            << "packageDir" << SmartSelectRuntimeConfig::instance().packageDir() << "workerScript"
+            << SmartSelectRuntimeConfig::instance().workerScriptPath() << "pythonExecutable"
+            << SmartSelectRuntimeConfig::instance().pythonExecutable();
 
     SmartSelectPlugin plugin(nullptr, QVariantList());
     plugin.injectTools();

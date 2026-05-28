@@ -53,14 +53,10 @@ void SegmentMap::buildFake(int width, int height)
     m_pixels.resize(width * height);
     std::fill(m_pixels.begin(), m_pixels.end(), 0);
 
-    const QRect topLeft(qMax(0, width / 12),
-                        qMax(0, height / 12),
-                        qMax(8, width / 4),
-                        qMax(8, height / 4));
-    const QRect bottomRight(qMax(0, width - width / 3),
-                            qMax(0, height - height / 3),
-                            qMax(8, width / 4),
-                            qMax(8, height / 4));
+    const QRect topLeft(
+        qMax(0, width / 12), qMax(0, height / 12), qMax(8, width / 4), qMax(8, height / 4));
+    const QRect bottomRight(qMax(0, width - width / 3), qMax(0, height - height / 3),
+        qMax(8, width / 4), qMax(8, height / 4));
 
     for (int y = topLeft.top(); y <= topLeft.bottom() && y < height; ++y) {
         for (int x = topLeft.left(); x <= topLeft.right() && x < width; ++x) {
@@ -90,7 +86,7 @@ void SegmentMap::buildFake(int width, int height)
     rebuildMetadata();
 }
 
-bool SegmentMap::loadNpy(const QString &path, QString *errorMessage)
+bool SegmentMap::loadNpy(const QString& path, QString *errorMessage)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -116,7 +112,8 @@ bool SegmentMap::loadNpy(const QString &path, QString *errorMessage)
         headerLength = uchar(bytes[8]) | (uchar(bytes[9]) << 8);
     } else if (major == 2) {
         headerOffset = 12;
-        headerLength = uchar(bytes[8]) | (uchar(bytes[9]) << 8) | (uchar(bytes[10]) << 16) | (uchar(bytes[11]) << 24);
+        headerLength = uchar(bytes[8]) | (uchar(bytes[9]) << 8) | (uchar(bytes[10]) << 16)
+            | (uchar(bytes[11]) << 24);
     } else {
         if (errorMessage) {
             *errorMessage = QStringLiteral("Unsupported .npy version");
@@ -145,10 +142,12 @@ bool SegmentMap::loadNpy(const QString &path, QString *errorMessage)
         return false;
     }
 
-    const QRegularExpression shapeRe(QStringLiteral("'shape'\\s*:\\s*\\((\\d+)\\s*,\\s*(\\d+)\\s*,?\\)"));
+    const QRegularExpression shapeRe(
+        QStringLiteral("'shape'\\s*:\\s*\\((\\d+)\\s*,\\s*(\\d+)\\s*,?\\)"));
     QRegularExpressionMatch match = shapeRe.match(header);
     if (!match.hasMatch()) {
-        const QRegularExpression jsonShapeRe(QStringLiteral("\"shape\"\\s*:\\s*\\[(\\d+)\\s*,\\s*(\\d+)\\]"));
+        const QRegularExpression jsonShapeRe(
+            QStringLiteral("\"shape\"\\s*:\\s*\\[(\\d+)\\s*,\\s*(\\d+)\\]"));
         match = jsonShapeRe.match(header);
     }
     if (!match.hasMatch()) {
@@ -177,7 +176,7 @@ bool SegmentMap::loadNpy(const QString &path, QString *errorMessage)
     return true;
 }
 
-quint16 SegmentMap::segmentAt(const QPoint &point) const
+quint16 SegmentMap::segmentAt(const QPoint& point) const
 {
     if (point.x() < 0 || point.y() < 0 || point.x() >= m_width || point.y() >= m_height) {
         return 0;
@@ -187,7 +186,7 @@ quint16 SegmentMap::segmentAt(const QPoint &point) const
 
 const SegmentMetadata *SegmentMap::metadata(quint16 id) const
 {
-    for (const SegmentMetadata &segment : m_segments) {
+    for (const SegmentMetadata& segment : m_segments) {
         if (segment.id == id) {
             return &segment;
         }
@@ -203,7 +202,7 @@ QRect SegmentMap::segmentBounds(quint16 id) const
     return QRect();
 }
 
-QImage SegmentMap::overlayImage(quint16 id, const QColor &color) const
+QImage SegmentMap::overlayImage(quint16 id, const QColor& color) const
 {
     const QRect bbox = segmentBounds(id);
     if (bbox.isEmpty()) {
@@ -262,7 +261,8 @@ void SegmentMap::rebuildMetadata()
 {
     m_segments.clear();
 
-    struct MutableMetadata {
+    struct MutableMetadata
+    {
         QRect bbox;
         int area = 0;
         bool seen = false;
@@ -279,7 +279,7 @@ void SegmentMap::rebuildMetadata()
                 mutableSegments.resize(id + 1);
             }
 
-            MutableMetadata &segment = mutableSegments[id];
+            MutableMetadata& segment = mutableSegments[id];
             const QPoint point(x, y);
             segment.bbox = segment.seen ? segment.bbox.united(QRect(point, QSize(1, 1)))
                                         : QRect(point, QSize(1, 1));
@@ -289,10 +289,10 @@ void SegmentMap::rebuildMetadata()
     }
 
     for (int id = 1; id < mutableSegments.size(); ++id) {
-        const MutableMetadata &segment = mutableSegments[id];
+        const MutableMetadata& segment = mutableSegments[id];
         if (!segment.seen) {
             continue;
         }
-        m_segments.push_back(SegmentMetadata{quint16(id), segment.bbox, segment.area, 1.0});
+        m_segments.push_back(SegmentMetadata { quint16(id), segment.bbox, segment.area, 1.0 });
     }
 }

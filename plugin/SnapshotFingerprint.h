@@ -5,7 +5,7 @@
 #include <QSize>
 #include <QString>
 
-QString exactSnapshotFingerprint(const QImage &snapshot, const QSize &fingerprintSize = QSize(64, 64));
+QString exactSnapshotFingerprint(
+    const QImage& snapshot, const QSize& fingerprintSize = QSize(64, 64));
 
 #endif // SMART_SELECT_SNAPSHOT_FINGERPRINT_H_
-

@@ -9,7 +9,8 @@
 #include <QString>
 #include <QVector>
 
-struct SegmentMetadata {
+struct SegmentMetadata
+{
     quint16 id = 0;
     QRect bbox;
     int area = 0;
@@ -21,7 +22,7 @@ class SegmentMap
 public:
     void clear();
     void buildFake(int width, int height);
-    bool loadNpy(const QString &path, QString *errorMessage = nullptr);
+    bool loadNpy(const QString& path, QString *errorMessage = nullptr);
 
     bool isEmpty() const;
     int width() const;
@@ -29,11 +30,11 @@ public:
     QRect bounds() const;
     int segmentCount() const;
 
-    quint16 segmentAt(const QPoint &point) const;
+    quint16 segmentAt(const QPoint& point) const;
     const SegmentMetadata *metadata(quint16 id) const;
     QRect segmentBounds(quint16 id) const;
 
-    QImage overlayImage(quint16 id, const QColor &color) const;
+    QImage overlayImage(quint16 id, const QColor& color) const;
     QByteArray selectionMask(quint16 id, QRect *maskBounds) const;
 
 private:
