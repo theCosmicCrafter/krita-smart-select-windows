@@ -1,0 +1,10 @@
+[tool.mypy]
+python_version = "3.13"
+mypy_path = "typings"
+strict = true
+warn_unreachable = true
+pretty = true
+files = [
+    "worker",
+    "python/smart_select",
+]

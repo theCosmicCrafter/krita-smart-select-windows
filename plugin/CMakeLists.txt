@@ -33,6 +33,25 @@ target_link_libraries(kritasmartselect PRIVATE
     kritaimage
 )
 
+option(SMART_SELECT_BUILD_TESTS "Build Krita Smart Select code tests" OFF)
+if(SMART_SELECT_BUILD_TESTS)
+    enable_testing()
+    find_package(Qt5 REQUIRED COMPONENTS Core Gui Test)
+
+    add_executable(smartselect_core_tests
+        tests/SmartSelectCoreTest.cpp
+        SegmentMap.cpp
+        SnapshotFingerprint.cpp
+    )
+    target_include_directories(smartselect_core_tests PRIVATE .)
+    target_link_libraries(smartselect_core_tests PRIVATE
+        Qt5::Core
+        Qt5::Gui
+        Qt5::Test
+    )
+    add_test(NAME smartselect_core_tests COMMAND smartselect_core_tests)
+endif()
+
 install(TARGETS kritasmartselect
     LIBRARY DESTINATION pykrita/smart_select/lib
 )

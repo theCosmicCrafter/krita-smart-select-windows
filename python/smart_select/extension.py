@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ctypes
 import os
 import platform
@@ -9,17 +11,17 @@ from krita import Extension
 
 
 class SmartSelectExtension(Extension):
-    def __init__(self, parent):
+    def __init__(self, parent: object) -> None:
         super().__init__(parent)
-        self._library = None
+        self._library: ctypes.CDLL | None = None
 
-    def setup(self):
+    def setup(self) -> None:
         self._load_native_plugin()
 
-    def createActions(self, window):
+    def createActions(self, window: object) -> None:
         pass
 
-    def _load_native_plugin(self):
+    def _load_native_plugin(self) -> None:
         package_dir = Path(__file__).resolve().parent
         lib_dir = package_dir / "lib"
         print(

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import json
 import struct
 import sys
@@ -7,26 +9,37 @@ import time
 import traceback
 import zipfile
 from array import array
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any, NotRequired, TypedDict
 
 
-cancelled_jobs = set()
+class SegmentMetadata(TypedDict):
+    id: int
+    bbox: list[int]
+    area: int
+    score: NotRequired[float]
 
 
-def emit(message):
+JsonObject = dict[str, Any]
+
+cancelled_jobs: set[int] = set()
+
+
+def emit(message: JsonObject) -> None:
     sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 
 
-def emit_progress(job_id, stage, progress=None):
+def emit_progress(job_id: int, stage: str, progress: float | None = None) -> None:
     emit({"id": job_id, "event": "progress", "stage": stage, "progress": progress})
 
 
-def emit_error(job_id, error_type, message):
+def emit_error(job_id: int, error_type: str, message: str) -> None:
     emit({"id": job_id, "error": {"type": error_type, "message": message}})
 
 
-def fake_segments(width, height):
+def fake_segments(width: int, height: int) -> tuple[array[int], list[SegmentMetadata]]:
     segment_map = array("H", [0]) * (width * height)
 
     top_x = max(0, width // 12)
@@ -56,7 +69,7 @@ def fake_segments(width, height):
         for x in range(br_x, min(width, br_x + br_w)):
             segment_map[y * width + x] = 3
 
-    metadata = []
+    metadata: list[SegmentMetadata] = []
     for segment_id in (1, 2, 3):
         xs = []
         ys = []
@@ -82,7 +95,7 @@ def fake_segments(width, height):
     return segment_map, metadata
 
 
-def npy_bytes(descr, shape, data):
+def npy_bytes(descr: str, shape: Sequence[int], data: bytes) -> bytes:
     if len(shape) == 1:
         shape_text = f"({shape[0]},)"
     else:
@@ -94,26 +107,26 @@ def npy_bytes(descr, shape, data):
     return b"\x93NUMPY\x01\x00" + struct.pack("<H", len(header_bytes)) + header_bytes + data
 
 
-def write_npy(path, descr, shape, data):
+def write_npy(path: str | Path, descr: str, shape: Sequence[int], data: bytes) -> None:
     Path(path).write_bytes(npy_bytes(descr, shape, data))
 
 
-def pack_uint16(values):
+def pack_uint16(values: Iterable[int]) -> bytes:
     data = array("H", values)
     if sys.byteorder != "little":
         data.byteswap()
     return data.tobytes()
 
 
-def pack_int32(values):
+def pack_int32(values: Sequence[int]) -> bytes:
     return struct.pack("<" + "i" * len(values), *values)
 
 
-def pack_float64(values):
+def pack_float64(values: Sequence[float]) -> bytes:
     return struct.pack("<" + "d" * len(values), *values)
 
 
-def write_segments_npz(path, metadata):
+def write_segments_npz(path: str | Path, metadata: Sequence[SegmentMetadata]) -> None:
     ids = [int(item["id"]) for item in metadata]
     bboxes = [int(value) for item in metadata for value in item["bbox"]]
     areas = [int(item["area"]) for item in metadata]
@@ -126,9 +139,20 @@ def write_segments_npz(path, metadata):
         archive.writestr("scores.npy", npy_bytes("<f8", (len(ids),), pack_float64(scores)))
 
 
-def handle_prepare_segments(job_id, params):
-    width = int(params.get("canvas_width") or 512)
-    height = int(params.get("canvas_height") or 512)
+def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
+    width_value = params.get("canvas_width", 512)
+    height_value = params.get("canvas_height", 512)
+    if width_value is None:
+        width_value = 512
+    if height_value is None:
+        height_value = 512
+    try:
+        width = int(width_value)
+        height = int(height_value)
+    except (TypeError, ValueError):
+        emit_error(job_id, "InvalidInput", "Canvas size is invalid")
+        return
+
     if width <= 0 or height <= 0:
         emit_error(job_id, "InvalidInput", "Canvas size is invalid")
         return
@@ -169,21 +193,26 @@ def handle_prepare_segments(job_id, params):
     )
 
 
-def handle_request(request):
+def handle_request(request: Mapping[str, Any]) -> None:
     job_id = int(request.get("id") or 0)
     method = request.get("method")
-    params = request.get("params") or {}
+    params_value = request.get("params", {})
+    if params_value is None:
+        params_value = {}
+    if not isinstance(params_value, dict):
+        emit_error(job_id, "InvalidInput", "Request params must be an object")
+        return
 
     if method == "prepare_segments":
-        handle_prepare_segments(job_id, params)
+        handle_prepare_segments(job_id, params_value)
     elif method == "cancel":
-        cancelled_jobs.add(int(params.get("job_id") or 0))
+        cancelled_jobs.add(int(params_value.get("job_id") or 0))
         emit({"id": job_id, "result": {"cancelled": True}})
     else:
         emit_error(job_id, "UnknownMethod", f"Unsupported method: {method}")
 
 
-def main():
+def main() -> None:
     for raw_line in sys.stdin:
         line = raw_line.strip()
         if not line:
