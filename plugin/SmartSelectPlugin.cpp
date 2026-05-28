@@ -14,7 +14,8 @@ SmartSelectPlugin::SmartSelectPlugin(QObject *parent, const QVariantList &)
     : QObject(parent)
 {
     auto addTool = [this](KoToolFactoryBase *toolFactory) {
-        qDebug() << "[SmartSelectPlugin] Registering tool factory:" << toolFactory->id();
+        qInfo() << "[SmartSelect] event=setup.tool_factory.register"
+                << "toolId" << toolFactory->id();
         KoToolRegistry::instance()->add(toolFactory);
         m_toolIds.append(toolFactory->id());
     };
@@ -31,7 +32,8 @@ void SmartSelectPlugin::injectTools()
 
     for (const QString &id : registry->keys()) {
         if (m_toolIds.contains(id)) {
-            qDebug() << "[SmartSelectPlugin] Injecting tool action for" << id;
+            qInfo() << "[SmartSelect] event=setup.tool_action.inject"
+                    << "toolId" << id;
             p->toolActionList.append(new KoToolAction(registry->value(id)));
         }
     }
@@ -41,9 +43,12 @@ extern "C" {
 
 Q_DECL_EXPORT void load_smart_select_plugin_with_runtime(const char *packageDir, const char *pythonExecutable)
 {
-    qDebug() << "[SmartSelectPlugin] Loading Smart Select plugin via Python loader with runtime paths.";
     SmartSelectRuntimeConfig::instance().setPackageDir(QString::fromUtf8(packageDir ? packageDir : ""));
     SmartSelectRuntimeConfig::instance().setPythonExecutable(QString::fromUtf8(pythonExecutable ? pythonExecutable : ""));
+    qInfo() << "[SmartSelect] event=setup.native_runtime"
+            << "packageDir" << SmartSelectRuntimeConfig::instance().packageDir()
+            << "workerScript" << SmartSelectRuntimeConfig::instance().workerScriptPath()
+            << "pythonExecutable" << SmartSelectRuntimeConfig::instance().pythonExecutable();
 
     SmartSelectPlugin plugin(nullptr, QVariantList());
     plugin.injectTools();
@@ -51,7 +56,8 @@ Q_DECL_EXPORT void load_smart_select_plugin_with_runtime(const char *packageDir,
 
 Q_DECL_EXPORT void load_smart_select_plugin()
 {
-    qDebug() << "[SmartSelectPlugin] Loading Smart Select plugin via Python loader.";
+    qInfo() << "[SmartSelect] event=setup.native_runtime"
+            << "mode=fallback_without_runtime_paths";
     SmartSelectPlugin plugin(nullptr, QVariantList());
     plugin.injectTools();
 }
