@@ -72,6 +72,10 @@ Python worker tests cover:
 - `prepare_segments` emits progress events;
 - worker writes valid `.npy <u2`;
 - `.npy` shape is `[height, width]`;
+- worker reads valid `uint8` alpha masks;
+- worker rejects invalid alpha masks;
+- transparent alpha mask pixels are excluded from mock segment maps;
+- metadata is recomputed after alpha masking;
 - invalid canvas size is rejected;
 - non-object request params are rejected;
 - cancel request records cancelled job;
@@ -87,15 +91,20 @@ C++ tests cover:
 - `segmentAt()` returns expected ids and handles out-of-bounds as background;
 - segment bounds are tight;
 - `selectionMask()` returns correct bounds and alpha bytes;
-- `exactSnapshotFingerprint()` is stable for equal images;
-- fingerprint changes when pixels change;
+- `exactSnapshotFingerprint()` is stable for equal RGB/alpha input;
+- fingerprint changes when RGB pixels change;
+- fingerprint changes when alpha mask changes;
 - fingerprint changes when image size changes;
-- null image fingerprint is empty.
+- invalid alpha mask length is rejected;
+- null image fingerprint is empty;
+- snapshot normalization composites transparent pixels over white;
+- snapshot normalization preserves alpha mask bytes;
+- fully transparent snapshots are detected;
+- `writeUint8Npy()` writes valid NumPy headers;
+- `writeUint8Npy()` rejects wrong payload sizes.
 
 ## Future Test Additions
 
-- Typed worker parser DTO tests.
-- Snapshot export tests for logic separable from Krita.
 - Cache key invalidation tests.
 - ModelRegistry validation tests.
 - Model download/cache tests.

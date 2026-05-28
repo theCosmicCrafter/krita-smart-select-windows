@@ -78,3 +78,7 @@ Stable decisions belong in `docs/`, not in long comments or a revived
 
 When changing architecture, protocol, typing, testing or support behavior,
 update the relevant doc in the same change.
+
+## Commits
+
+Commit messages should conform to the conventional commits standard

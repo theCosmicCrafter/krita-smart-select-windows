@@ -2,6 +2,7 @@
 
 #include "SelectionApply.h"
 #include "SmartSelectRuntimeConfig.h"
+#include "SnapshotCapture.h"
 #include "WorkerClient.h"
 
 #include <QCursor>
@@ -15,6 +16,7 @@
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QTimer>
 
 #include <KisOptionCollectionWidget.h>
 #include <KisViewManager.h>
@@ -26,10 +28,25 @@
 #include <kis_selection_tool_config_widget_helper.h>
 #include <klocalizedstring.h>
 
+namespace
+{
+
+constexpr int PREPARE_DEBOUNCE_MS = 300;
+
+const QString MOCK_MODEL_ID = QStringLiteral("mock");
+const QString ALGORITHM_VERSION = QStringLiteral("mock-worker-snapshot-v1");
+
+} // namespace
+
 SmartSelectTool::SmartSelectTool(KoCanvasBase *canvas)
     : KisToolSelect(canvas, QCursor(Qt::CrossCursor), i18n("Smart Select"))
 {
     setObjectName("tool_smart_select");
+    m_prepareDebounceTimer = new QTimer(this);
+    m_prepareDebounceTimer->setSingleShot(true);
+    m_prepareDebounceTimer->setInterval(PREPARE_DEBOUNCE_MS);
+    connect(m_prepareDebounceTimer, &QTimer::timeout, this,
+        &SmartSelectTool::runScheduledPrepareSegments);
 }
 
 SmartSelectTool::~SmartSelectTool()
@@ -41,6 +58,8 @@ SmartSelectTool::~SmartSelectTool()
         disconnect(m_worker, nullptr, this, nullptr);
         m_worker->stop();
     }
+    cleanupTempFiles(m_activeJobCleanupPaths);
+    clearActiveJobState();
 
     qInfo() << "[SmartSelect] event=tool.destroy.exit";
 }
@@ -55,7 +74,8 @@ void SmartSelectTool::activate(const QSet<KoShape *>& shapes)
     qInfo() << "[SmartSelect] event=tool.activate.after_base";
 
     if (KisImage *image = currentImage().data()) {
-        connect(image, SIGNAL(sigImageUpdated(QRect)), this, SLOT(updateImage(QRect)));
+        connect(image, SIGNAL(sigImageUpdated(QRect)), this, SLOT(updateImage(QRect)),
+            Qt::UniqueConnection);
         qInfo() << "[SmartSelect] event=tool.activate.image_connected"
                 << "bounds" << image->bounds();
     } else {
@@ -79,6 +99,9 @@ void SmartSelectTool::deactivate()
         qInfo() << "[SmartSelect] event=tool.deactivate.image_disconnected";
     }
 
+    if (m_prepareDebounceTimer) {
+        m_prepareDebounceTimer->stop();
+    }
     cancelActiveJob();
 
     const quint16 oldHover = m_hoverSegmentId;
@@ -98,7 +121,13 @@ void SmartSelectTool::deactivate()
 void SmartSelectTool::updateImage(QRect const&)
 {
     qInfo() << "[SmartSelect] event=tool.image.updated";
-    prepareSegments();
+    const quint16 oldHover = m_hoverSegmentId;
+    m_hoverSegmentId = 0;
+    requestSegmentUpdate(oldHover);
+    clearPreparedData();
+    cancelActiveJob();
+    setState(State::Preparing);
+    schedulePrepareSegments();
 }
 
 void SmartSelectTool::prepareSegments()
@@ -113,11 +142,81 @@ void SmartSelectTool::prepareSegments()
     }
 
     setState(State::Preparing);
+
+    qInfo() << "[SmartSelect] event=snapshot.capture.start"
+            << "bounds" << currentImage()->bounds();
+    SnapshotInput snapshot;
+    QString error;
+    if (!captureSnapshot(currentImage(), &snapshot, &error)) {
+        qWarning() << "[SmartSelect] event=snapshot.capture.failed"
+                   << "reason" << error;
+        setState(State::Error, error);
+        return;
+    }
+
+    qInfo() << "[SmartSelect] event=snapshot.capture.succeeded"
+            << "canvasSize" << snapshot.canvasSize << "hasVisiblePixels"
+            << snapshot.hasVisiblePixels << "fingerprintPrefix"
+            << fingerprintPrefix(snapshot.fingerprint);
+
+    const SegmentCacheKey cacheKey {
+        snapshot.canvasSize,
+        MOCK_MODEL_ID,
+        ALGORITHM_VERSION,
+        snapshot.fingerprint,
+    };
+
+    if (!snapshot.hasVisiblePixels) {
+        m_cache = PreparedSegmentCacheEntry();
+        setState(State::Ready);
+        return;
+    }
+
+    if (m_cache.valid && m_cache.key == cacheKey && !m_cache.segmentMap.isEmpty()) {
+        qInfo() << "[SmartSelect] event=cache.hit"
+                << "modelId" << cacheKey.modelId << "algorithmVersion" << cacheKey.algorithmVersion
+                << "fingerprintPrefix" << fingerprintPrefix(cacheKey.fingerprint) << "segmentCount"
+                << m_cache.segmentMap.segmentCount();
+        m_segmentMap = m_cache.segmentMap;
+        setState(State::Ready);
+        if (currentImage()) {
+            canvas()->updateCanvas(currentImage()->pixelToDocument(currentImage()->bounds()));
+        }
+        return;
+    }
+
+    qInfo() << "[SmartSelect] event=cache.miss"
+            << "modelId" << cacheKey.modelId << "algorithmVersion" << cacheKey.algorithmVersion
+            << "fingerprintPrefix" << fingerprintPrefix(cacheKey.fingerprint);
+
     if (!startWorkerIfNeeded()) {
         return;
     }
 
-    startMockPrepareJob();
+    SnapshotFiles files;
+    if (!writeSnapshotFiles(snapshot, &files, &error)) {
+        qWarning() << "[SmartSelect] event=snapshot.files.failed"
+                   << "reason" << error;
+        setState(State::Error, error);
+        return;
+    }
+
+    startPrepareJob(cacheKey, files.imagePath, files.alphaMaskPath, files.cleanupPaths);
+}
+
+void SmartSelectTool::schedulePrepareSegments()
+{
+    qInfo() << "[SmartSelect] event=prepare.debounced"
+            << "delayMs" << PREPARE_DEBOUNCE_MS;
+    if (m_prepareDebounceTimer) {
+        m_prepareDebounceTimer->start();
+    }
+}
+
+void SmartSelectTool::runScheduledPrepareSegments()
+{
+    qInfo() << "[SmartSelect] event=prepare.debounce.fire";
+    prepareSegments();
 }
 
 bool SmartSelectTool::startWorkerIfNeeded()
@@ -161,19 +260,33 @@ bool SmartSelectTool::startWorkerIfNeeded()
     return true;
 }
 
-void SmartSelectTool::startMockPrepareJob()
+void SmartSelectTool::startPrepareJob(const SegmentCacheKey& cacheKey, const QString& imagePath,
+    const QString& alphaMaskPath, const QStringList& cleanupPaths)
 {
     if (!currentImage() || !m_worker) {
         return;
     }
 
     const QRect bounds = currentImage()->bounds();
-    m_activeJobId = m_worker->prepareSegments(
-        QString(), QStringLiteral("mock"), QStringLiteral("mock-no-snapshot-v1"), bounds.size());
+    PrepareSegmentsRequest request;
+    request.imagePath = imagePath;
+    request.alphaMaskPath = alphaMaskPath;
+    request.modelId = cacheKey.modelId;
+    request.algorithmVersion = cacheKey.algorithmVersion;
+    request.fingerprint = cacheKey.fingerprint;
+    request.canvasSize = bounds.size();
+
+    m_activeJobId = m_worker->prepareSegments(request);
+    m_activeJobCacheKey = cacheKey;
+    m_activeJobCleanupPaths = cleanupPaths;
+    m_activeJobImagePtr = reinterpret_cast<quintptr>(currentImage().data());
     qInfo() << "[SmartSelect] event=inference.start"
-            << "jobId" << m_activeJobId << "modelId=mock"
-            << "fingerprint=mock-no-snapshot-v1"
-            << "canvasSize" << bounds.size();
+            << "jobId" << m_activeJobId << "modelId" << cacheKey.modelId << "algorithmVersion"
+            << cacheKey.algorithmVersion << "fingerprintPrefix"
+            << fingerprintPrefix(cacheKey.fingerprint) << "canvasSize" << bounds.size();
+    qInfo() << "[SmartSelect] event=snapshot.files.written"
+            << "jobId" << m_activeJobId << "imagePath" << imagePath << "alphaMaskPath"
+            << alphaMaskPath;
 }
 
 void SmartSelectTool::cancelActiveJob()
@@ -182,8 +295,9 @@ void SmartSelectTool::cancelActiveJob()
         qInfo() << "[SmartSelect] event=inference.cancelled"
                 << "jobId" << m_activeJobId;
         m_worker->cancel(m_activeJobId);
-        m_activeJobId = 0;
     }
+    cleanupTempFiles(m_activeJobCleanupPaths);
+    clearActiveJobState();
 }
 
 void SmartSelectTool::setState(State state, const QString& message)
@@ -254,6 +368,19 @@ void SmartSelectTool::clearPreparedData()
     m_segmentMap.clear();
 }
 
+void SmartSelectTool::clearActiveJobState()
+{
+    m_activeJobId = 0;
+    m_activeJobCacheKey = SegmentCacheKey();
+    m_activeJobCleanupPaths.clear();
+    m_activeJobImagePtr = 0;
+}
+
+QString SmartSelectTool::fingerprintPrefix(const QString& fingerprint) const
+{
+    return fingerprint.left(12);
+}
+
 void SmartSelectTool::cleanupTempFiles(const QStringList& paths)
 {
     for (const QString& path : paths) {
@@ -298,13 +425,14 @@ void SmartSelectTool::onWorkerProgress(
 void SmartSelectTool::onWorkerResult(
     int id, const QString& segmentMapPath, const QString& segmentsPath, const QJsonArray& metadata)
 {
-    QStringList cleanupPaths;
-    cleanupPaths << segmentMapPath << segmentsPath;
+    const QStringList resultCleanupPaths { segmentMapPath, segmentsPath };
+    const bool staleImage = !currentImage()
+        || reinterpret_cast<quintptr>(currentImage().data()) != m_activeJobImagePtr;
 
-    if (id != m_activeJobId) {
+    if (id != m_activeJobId || staleImage || !m_activeJobCacheKey.isValid()) {
         qInfo() << "[SmartSelect] event=inference.result.ignored_stale"
-                << "jobId" << id << "activeJobId" << m_activeJobId;
-        cleanupTempFiles(cleanupPaths);
+                << "jobId" << id << "activeJobId" << m_activeJobId << "staleImage" << staleImage;
+        cleanupTempFiles(resultCleanupPaths);
         return;
     }
 
@@ -315,14 +443,19 @@ void SmartSelectTool::onWorkerResult(
     QString error;
     SegmentMap loadedMap;
     if (!loadedMap.loadNpy(segmentMapPath, &error)) {
-        cleanupTempFiles(cleanupPaths);
-        m_activeJobId = 0;
+        cleanupTempFiles(resultCleanupPaths);
+        cleanupTempFiles(m_activeJobCleanupPaths);
+        clearActiveJobState();
         setState(State::Error, error);
         return;
     }
 
     m_segmentMap = loadedMap;
-    m_activeJobId = 0;
+    m_cache.key = m_activeJobCacheKey;
+    m_cache.segmentMap = loadedMap;
+    m_cache.valid = !loadedMap.isEmpty();
+    cleanupTempFiles(m_activeJobCleanupPaths);
+    clearActiveJobState();
     setState(m_segmentMap.isEmpty() ? State::Error : State::Ready,
         m_segmentMap.isEmpty() ? i18n("segment map is empty") : QString());
 
@@ -330,7 +463,7 @@ void SmartSelectTool::onWorkerResult(
         canvas()->updateCanvas(currentImage()->pixelToDocument(currentImage()->bounds()));
     }
 
-    cleanupTempFiles(cleanupPaths);
+    cleanupTempFiles(resultCleanupPaths);
 }
 
 void SmartSelectTool::onWorkerError(int id, const QString& type, const QString& message)
@@ -343,7 +476,8 @@ void SmartSelectTool::onWorkerError(int id, const QString& type, const QString& 
 
     qWarning() << "[SmartSelect] event=inference.failed"
                << "jobId" << id << "type" << type << "message" << message;
-    m_activeJobId = 0;
+    cleanupTempFiles(m_activeJobCleanupPaths);
+    clearActiveJobState();
     setState(State::Error, message);
 }
 
@@ -356,7 +490,8 @@ void SmartSelectTool::onWorkerCrashed(const QString& message)
 {
     qWarning() << "[SmartSelect] event=worker.crashed" << "message" << message;
     if (m_state == State::Preparing || m_activeJobId != 0) {
-        m_activeJobId = 0;
+        cleanupTempFiles(m_activeJobCleanupPaths);
+        clearActiveJobState();
         setState(State::Error, message);
     }
 }

@@ -1,5 +1,7 @@
+#include "../NpyWriter.h"
 #include "../SegmentMap.h"
 #include "../SnapshotFingerprint.h"
+#include "../SnapshotImage.h"
 
 #include <QColor>
 #include <QFile>
@@ -83,6 +85,12 @@ private Q_SLOTS:
     void loadNpyRejectsTruncatedPayload();
     void segmentSelectionMaskUsesTightBounds();
     void exactFingerprintIsStableAndContentSensitive();
+    void fingerprintIncludesAlphaMask();
+    void fingerprintRejectsInvalidAlphaMask();
+    void snapshotNormalizationCompositesOverWhiteAndKeepsAlpha();
+    void snapshotNormalizationDetectsFullyTransparentImage();
+    void writeUint8NpyWritesValidHeader();
+    void writeUint8NpyRejectsInvalidPayloadSize();
 };
 
 void SmartSelectCoreTest::loadNpyAcceptsUint16SegmentMap()
@@ -187,6 +195,89 @@ void SmartSelectCoreTest::exactFingerprintIsStableAndContentSensitive()
     QVERIFY(exactSnapshotFingerprint(changed) != firstHash);
     QVERIFY(exactSnapshotFingerprint(differentSize) != firstHash);
     QVERIFY(exactSnapshotFingerprint(QImage()).isEmpty());
+}
+
+void SmartSelectCoreTest::fingerprintIncludesAlphaMask()
+{
+    QImage rgb(4, 4, QImage::Format_RGB888);
+    rgb.fill(QColor(10, 20, 30));
+    QByteArray alpha(16, char(255));
+    QByteArray changedAlpha = alpha;
+    changedAlpha[0] = char(0);
+
+    const QString firstHash = exactSnapshotFingerprint(rgb, alpha);
+    QVERIFY(!firstHash.isEmpty());
+    QCOMPARE(exactSnapshotFingerprint(rgb, alpha), firstHash);
+    QVERIFY(exactSnapshotFingerprint(rgb, changedAlpha) != firstHash);
+}
+
+void SmartSelectCoreTest::fingerprintRejectsInvalidAlphaMask()
+{
+    QImage rgb(4, 4, QImage::Format_RGB888);
+    rgb.fill(Qt::black);
+
+    QVERIFY(exactSnapshotFingerprint(rgb, QByteArray(15, char(255))).isEmpty());
+}
+
+void SmartSelectCoreTest::snapshotNormalizationCompositesOverWhiteAndKeepsAlpha()
+{
+    QImage source(2, 1, QImage::Format_RGBA8888);
+    source.setPixelColor(0, 0, QColor(0, 0, 0, 0));
+    source.setPixelColor(1, 0, QColor(0, 0, 0, 128));
+
+    NormalizedSnapshot snapshot;
+    QString error;
+    QVERIFY2(normalizeSnapshotImage(source, &snapshot, &error), qPrintable(error));
+
+    QCOMPARE(snapshot.canvasSize, QSize(2, 1));
+    QCOMPARE(snapshot.alphaMask.size(), 2);
+    QCOMPARE(uchar(snapshot.alphaMask[0]), uchar(0));
+    QCOMPARE(uchar(snapshot.alphaMask[1]), uchar(128));
+    QVERIFY(snapshot.hasVisiblePixels);
+    QCOMPARE(snapshot.modelRgbImage.pixelColor(0, 0), QColor(255, 255, 255));
+    QCOMPARE(snapshot.modelRgbImage.pixelColor(1, 0), QColor(127, 127, 127));
+}
+
+void SmartSelectCoreTest::snapshotNormalizationDetectsFullyTransparentImage()
+{
+    QImage source(2, 2, QImage::Format_RGBA8888);
+    source.fill(QColor(255, 0, 0, 0));
+
+    NormalizedSnapshot snapshot;
+    QString error;
+    QVERIFY2(normalizeSnapshotImage(source, &snapshot, &error), qPrintable(error));
+
+    QVERIFY(!snapshot.hasVisiblePixels);
+    QCOMPARE(snapshot.alphaMask, QByteArray(4, char(0)));
+}
+
+void SmartSelectCoreTest::writeUint8NpyWritesValidHeader()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("alpha.npy"));
+
+    QString error;
+    QVERIFY2(writeUint8Npy(path, QSize(3, 2), QByteArray("\x00\x01\x02\x03\x04\x05", 6), &error),
+        qPrintable(error));
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray bytes = file.readAll();
+    QVERIFY(bytes.startsWith("\x93NUMPY"));
+    QVERIFY(bytes.contains("'descr': '|u1'"));
+    QVERIFY(bytes.contains("'shape': (2, 3)"));
+    QVERIFY(bytes.endsWith(QByteArray("\x00\x01\x02\x03\x04\x05", 6)));
+}
+
+void SmartSelectCoreTest::writeUint8NpyRejectsInvalidPayloadSize()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QString error;
+    QVERIFY(!writeUint8Npy(
+        dir.filePath(QStringLiteral("bad.npy")), QSize(3, 2), QByteArray("\x00\x01", 2), &error));
+    QCOMPARE(error, QStringLiteral("Invalid uint8 .npy payload size"));
 }
 
 QTEST_GUILESS_MAIN(SmartSelectCoreTest)

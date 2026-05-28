@@ -48,16 +48,17 @@ void WorkerClient::stop()
     }
 }
 
-int WorkerClient::prepareSegments(const QString& imagePath, const QString& modelId,
-    const QString& fingerprint, const QSize& canvasSize)
+int WorkerClient::prepareSegments(const PrepareSegmentsRequest& prepareRequest)
 {
     const int id = m_nextId++;
     QJsonObject params;
-    params["image_path"] = imagePath;
-    params["model_id"] = modelId;
-    params["fingerprint"] = fingerprint;
-    params["canvas_width"] = canvasSize.width();
-    params["canvas_height"] = canvasSize.height();
+    params["image_path"] = prepareRequest.imagePath;
+    params["alpha_mask_path"] = prepareRequest.alphaMaskPath;
+    params["model_id"] = prepareRequest.modelId;
+    params["algorithm_version"] = prepareRequest.algorithmVersion;
+    params["fingerprint"] = prepareRequest.fingerprint;
+    params["canvas_width"] = prepareRequest.canvasSize.width();
+    params["canvas_height"] = prepareRequest.canvasSize.height();
 
     QJsonObject request;
     request["id"] = id;

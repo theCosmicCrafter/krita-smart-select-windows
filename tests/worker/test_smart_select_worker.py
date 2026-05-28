@@ -8,6 +8,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,10 @@ def parse_npy_header(path: Path) -> tuple[str, tuple[int, ...], bytes]:
     shape = tuple(int(value.strip()) for value in shape_text.split(",") if value.strip())
     payload = data[10 + header_length :]
     return descr, shape, payload
+
+
+def uint16_values(payload: bytes) -> tuple[int, ...]:
+    return struct.unpack("<" + "H" * (len(payload) // 2), payload)
 
 
 class SmartSelectWorkerTests(unittest.TestCase):
@@ -114,6 +119,87 @@ class SmartSelectWorkerTests(unittest.TestCase):
                     },
                 }
             ],
+        )
+
+    def test_read_npy_uint8_2d_accepts_valid_alpha_mask(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "alpha.npy"
+            self.worker.write_npy(path, "|u1", (2, 3), b"\x00\x01\x02\x03\x04\x05")
+
+            width, height, payload = self.worker.read_npy_uint8_2d(path)
+
+        self.assertEqual((width, height), (3, 2))
+        self.assertEqual(payload, b"\x00\x01\x02\x03\x04\x05")
+
+    def test_read_npy_uint8_2d_rejects_wrong_dtype(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "alpha.npy"
+            self.worker.write_npy(path, "<u2", (2, 3), b"\x00" * 12)
+
+            with self.assertRaisesRegex(ValueError, "Expected uint8 alpha mask"):
+                self.worker.read_npy_uint8_2d(path)
+
+    def test_prepare_segments_alpha_mask_excludes_transparent_pixels(self) -> None:
+        output = io.StringIO()
+        cleanup_dir: Path | None = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            alpha_path = Path(temp_dir) / "alpha.npy"
+            alpha = bytearray([255] * (32 * 24))
+            for y in range(2, 10):
+                for x in range(2, 10):
+                    alpha[y * 32 + x] = 0
+            self.worker.write_npy(alpha_path, "|u1", (24, 32), bytes(alpha))
+
+            try:
+                with contextlib.redirect_stdout(output):
+                    self.worker.handle_prepare_segments(
+                        12,
+                        {
+                            "image_path": "",
+                            "alpha_mask_path": str(alpha_path),
+                            "model_id": "mock",
+                            "algorithm_version": "mock-worker-snapshot-v1",
+                            "fingerprint": "fingerprint",
+                            "canvas_width": 32,
+                            "canvas_height": 24,
+                        },
+                    )
+
+                messages = [json.loads(line) for line in output.getvalue().splitlines()]
+                result = messages[-1]["result"]
+                cleanup_dir = Path(result["segment_map_path"]).parent
+                self.assertEqual([item["id"] for item in result["metadata"]], [2, 3])
+
+                descr, shape, payload = parse_npy_header(Path(result["segment_map_path"]))
+                self.assertEqual(descr, "<u2")
+                self.assertEqual(shape, (24, 32))
+                values = uint16_values(payload)
+                self.assertEqual(values[2 * 32 + 2], 0)
+                self.assertEqual(values[12 * 32 + 16], 2)
+            finally:
+                if cleanup_dir is not None:
+                    shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+    def test_prepare_segments_rejects_alpha_mask_size_mismatch(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            alpha_path = Path(temp_dir) / "alpha.npy"
+            self.worker.write_npy(alpha_path, "|u1", (2, 3), b"\xff" * 6)
+
+            with contextlib.redirect_stdout(output):
+                self.worker.handle_prepare_segments(
+                    13,
+                    {
+                        "alpha_mask_path": str(alpha_path),
+                        "canvas_width": 32,
+                        "canvas_height": 24,
+                    },
+                )
+
+        messages = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(messages[0]["error"]["type"], "InvalidInput")
+        self.assertEqual(
+            messages[0]["error"]["message"], "Alpha mask size does not match canvas size"
         )
 
     def test_handle_request_rejects_non_object_params(self) -> None:

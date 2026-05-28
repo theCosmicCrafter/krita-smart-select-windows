@@ -6,6 +6,16 @@
 #include <QProcess>
 #include <QSize>
 
+struct PrepareSegmentsRequest
+{
+    QString imagePath;
+    QString alphaMaskPath;
+    QString modelId;
+    QString algorithmVersion;
+    QString fingerprint;
+    QSize canvasSize;
+};
+
 class WorkerClient : public QObject
 {
     Q_OBJECT
@@ -17,8 +27,7 @@ public:
     bool start(const QString& pythonExecutable, const QString& workerScript);
     void stop();
 
-    int prepareSegments(const QString& imagePath, const QString& modelId,
-        const QString& fingerprint, const QSize& canvasSize);
+    int prepareSegments(const PrepareSegmentsRequest& request);
     void cancel(int jobId);
 
 Q_SIGNALS:

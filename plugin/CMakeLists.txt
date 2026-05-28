@@ -9,9 +9,12 @@ set(kritasmartselect_SOURCES
     SmartSelectPlugin.cpp
     SmartSelectRuntimeConfig.cpp
     SmartSelectTool.cpp
+    NpyWriter.cpp
     SegmentMap.cpp
     SelectionApply.cpp
+    SnapshotCapture.cpp
     SnapshotFingerprint.cpp
+    SnapshotImage.cpp
     WorkerClient.cpp
     ${CMAKE_SOURCE_DIR}/plugins/tools/selectiontools/kis_selection_modifier_mapper.cc
 )
@@ -40,8 +43,10 @@ if(SMART_SELECT_BUILD_TESTS)
 
     add_executable(smartselect_core_tests
         tests/SmartSelectCoreTest.cpp
+        NpyWriter.cpp
         SegmentMap.cpp
         SnapshotFingerprint.cpp
+        SnapshotImage.cpp
     )
     target_include_directories(smartselect_core_tests PRIVATE .)
     target_link_libraries(smartselect_core_tests PRIVATE

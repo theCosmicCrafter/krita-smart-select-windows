@@ -21,6 +21,16 @@ class SegmentMetadata(TypedDict):
     score: NotRequired[float]
 
 
+class PrepareSegmentsParams(TypedDict, total=False):
+    image_path: str
+    alpha_mask_path: str
+    model_id: str
+    algorithm_version: str
+    fingerprint: str
+    canvas_width: int
+    canvas_height: int
+
+
 JsonObject = dict[str, Any]
 
 cancelled_jobs: set[int] = set()
@@ -37,6 +47,35 @@ def emit_progress(job_id: int, stage: str, progress: float | None = None) -> Non
 
 def emit_error(job_id: int, error_type: str, message: str) -> None:
     emit({"id": job_id, "error": {"type": error_type, "message": message}})
+
+
+def metadata_from_segment_map(
+    segment_map: Sequence[int], width: int, height: int
+) -> list[SegmentMetadata]:
+    ids = sorted({int(value) for value in segment_map if value > 0})
+    metadata: list[SegmentMetadata] = []
+    for segment_id in ids:
+        xs: list[int] = []
+        ys: list[int] = []
+        for index, value in enumerate(segment_map):
+            if value == segment_id:
+                ys.append(index // width)
+                xs.append(index % width)
+        if not xs:
+            continue
+        x0 = min(xs)
+        y0 = min(ys)
+        x1 = max(xs)
+        y1 = max(ys)
+        metadata.append(
+            {
+                "id": segment_id,
+                "bbox": [x0, y0, x1 - x0 + 1, y1 - y0 + 1],
+                "area": len(xs),
+                "score": 1.0,
+            }
+        )
+    return metadata
 
 
 def fake_segments(width: int, height: int) -> tuple[array[int], list[SegmentMetadata]]:
@@ -69,30 +108,7 @@ def fake_segments(width: int, height: int) -> tuple[array[int], list[SegmentMeta
         for x in range(br_x, min(width, br_x + br_w)):
             segment_map[y * width + x] = 3
 
-    metadata: list[SegmentMetadata] = []
-    for segment_id in (1, 2, 3):
-        xs = []
-        ys = []
-        for index, value in enumerate(segment_map):
-            if value == segment_id:
-                ys.append(index // width)
-                xs.append(index % width)
-        if not xs:
-            continue
-        x0 = min(xs)
-        y0 = min(ys)
-        x1 = max(xs)
-        y1 = max(ys)
-        metadata.append(
-            {
-                "id": segment_id,
-                "bbox": [x0, y0, x1 - x0 + 1, y1 - y0 + 1],
-                "area": len(xs),
-                "score": 1.0,
-            }
-        )
-
-    return segment_map, metadata
+    return segment_map, metadata_from_segment_map(segment_map, width, height)
 
 
 def npy_bytes(descr: str, shape: Sequence[int], data: bytes) -> bytes:
@@ -109,6 +125,56 @@ def npy_bytes(descr: str, shape: Sequence[int], data: bytes) -> bytes:
 
 def write_npy(path: str | Path, descr: str, shape: Sequence[int], data: bytes) -> None:
     Path(path).write_bytes(npy_bytes(descr, shape, data))
+
+
+def read_npy_uint8_2d(path: str | Path) -> tuple[int, int, bytes]:
+    data = Path(path).read_bytes()
+    if len(data) < 16 or not data.startswith(b"\x93NUMPY"):
+        raise ValueError("Not a NumPy .npy file")
+
+    major = data[6]
+    if major == 1:
+        header_offset = 10
+        header_length = struct.unpack("<H", data[8:10])[0]
+    elif major == 2:
+        header_offset = 12
+        header_length = struct.unpack("<I", data[8:12])[0]
+    else:
+        raise ValueError("Unsupported .npy version")
+
+    header_end = header_offset + header_length
+    if len(data) < header_end:
+        raise ValueError("Truncated .npy header")
+
+    header = data[header_offset:header_end].decode("latin1")
+    if "'descr': '|u1'" not in header and '"descr": "|u1"' not in header:
+        raise ValueError("Expected uint8 alpha mask")
+    if "'fortran_order': True" in header or '"fortran_order": true' in header:
+        raise ValueError("Fortran-order .npy arrays are not supported")
+
+    marker = "'shape': ("
+    if marker not in header:
+        raise ValueError("Could not parse .npy shape")
+    shape_text = header.split(marker, 1)[1].split(")", 1)[0]
+    shape = tuple(int(value.strip()) for value in shape_text.split(",") if value.strip())
+    if len(shape) != 2:
+        raise ValueError("Expected 2D alpha mask")
+
+    height, width = shape
+    payload = data[header_end:]
+    expected_size = width * height
+    if width <= 0 or height <= 0 or len(payload) < expected_size:
+        raise ValueError("Truncated .npy alpha mask payload")
+
+    return width, height, payload[:expected_size]
+
+
+def apply_alpha_mask(segment_map: array[int], alpha_mask: bytes) -> None:
+    if len(segment_map) != len(alpha_mask):
+        raise ValueError("Alpha mask size does not match segment map")
+    for index, alpha in enumerate(alpha_mask):
+        if alpha == 0:
+            segment_map[index] = 0
 
 
 def pack_uint16(values: Iterable[int]) -> bytes:
@@ -157,6 +223,23 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
         emit_error(job_id, "InvalidInput", "Canvas size is invalid")
         return
 
+    image_path = params.get("image_path")
+    if isinstance(image_path, str) and image_path and not Path(image_path).exists():
+        emit_error(job_id, "InvalidInput", "Snapshot image not found")
+        return
+
+    alpha_mask: bytes | None = None
+    alpha_mask_path = params.get("alpha_mask_path")
+    if isinstance(alpha_mask_path, str) and alpha_mask_path:
+        try:
+            mask_width, mask_height, alpha_mask = read_npy_uint8_2d(alpha_mask_path)
+        except (OSError, ValueError) as exc:
+            emit_error(job_id, "InvalidInput", str(exc))
+            return
+        if mask_width != width or mask_height != height:
+            emit_error(job_id, "InvalidInput", "Alpha mask size does not match canvas size")
+            return
+
     emit_progress(job_id, "loading_model")
     time.sleep(0.03)
     if job_id in cancelled_jobs:
@@ -169,6 +252,9 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
 
     emit_progress(job_id, "generating_segments", 0.42)
     segment_map, metadata = fake_segments(width, height)
+    if alpha_mask is not None:
+        apply_alpha_mask(segment_map, alpha_mask)
+        metadata = metadata_from_segment_map(segment_map, width, height)
     time.sleep(0.03)
     if job_id in cancelled_jobs:
         return

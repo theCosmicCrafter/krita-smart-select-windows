@@ -106,12 +106,14 @@ MVP таргетирует конкретную версию Krita, а не ши
 - click-to-selection;
 - Python loader wrapper;
 - worker-backed mock segmentation через `QProcess`;
+- flattened snapshot export as RGB PNG plus alpha mask;
+- downscaled `128x128` snapshot fingerprint;
+- exact in-memory cache reuse by size/model/algorithm/fingerprint;
+- debounced rebuild on active image updates;
 - Tool Options status/progress/cancel block;
 - type checking and code tests.
 
 Ещё не реализовано:
 
-- real flattened snapshot export;
-- exact in-memory cache reuse;
 - SAM2/SAM2.1 inference;
 - persistent logs and support dialog.

@@ -12,8 +12,9 @@ MVP использует `QProcess` + stdio NDJSON как control channel.
 
 Большие массивы передаются через временные файлы:
 
-- C++ сохраняет flattened snapshot во временный image/raw/npy-файл и передаёт
-  worker путь.
+- C++ сохраняет flattened snapshot как RGB PNG и передаёт worker путь.
+- C++ сохраняет alpha/background mask как `uint8` `.npy` и передаёт worker
+  путь.
 - Python worker пишет `segment_map` и masks во временные `.npy`/`.npz` файлы.
 - Worker возвращает пути вместе с metadata.
 - C++ tool читает результат в память.
@@ -27,14 +28,18 @@ Shared memory можно рассмотреть позже, если време�
 ### `prepare_segments`
 
 ```json
-{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","model_id":"sam2_hiera_tiny","fingerprint":"...","canvas_width":1024,"canvas_height":768}}
+{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","model_id":"sam2_hiera_tiny","algorithm_version":"sam2-auto-mask-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768}}
 ```
 
 Parameters:
 
-- `image_path`: путь к snapshot input. На mock-stage может быть пустым.
+- `image_path`: путь к RGB snapshot input.
+- `alpha_mask_path`: путь к `uint8` `.npy` alpha/background mask. Значение `0`
+  означает fully transparent/background, значения `1..255` считаются видимыми.
 - `model_id`: registry id модели, например `sam2_hiera_tiny` или `mock`.
-- `fingerprint`: exact fingerprint snapshot-а.
+- `algorithm_version`: версия алгоритма подготовки segment map.
+- `fingerprint`: fingerprint snapshot-а. Текущий MVP использует downscaled
+  `128x128` hash.
 - `canvas_width`: ширина canvas в image pixels.
 - `canvas_height`: высота canvas в image pixels.
 
@@ -110,6 +115,15 @@ Fields:
 If segment count can exceed `65535`, the contract must be upgraded to `uint32`
 explicitly on both C++ and worker sides.
 
+## Alpha Mask Contract
+
+- Format: NumPy `.npy`.
+- Current dtype: `|u1` / `uint8`.
+- Shape: `[canvas_height, canvas_width]`.
+- Value `0`: fully transparent/background, must not be selectable.
+- Value `1..255`: visible/semi-visible, may be selectable.
+- Coordinate convention: image pixel coordinates, origin top-left.
+
 ## Segment Metadata Contract
 
 ```json
@@ -133,5 +147,6 @@ Optional fields:
 
 ## Current Implementation Status
 
-Current worker implementation generates mock segment maps. Real SAM2 inference
-will reuse the same protocol and replace mock generation inside the worker.
+Current worker implementation generates mock segment maps and masks out fully
+transparent pixels using `alpha_mask_path`. Real SAM2 inference will reuse the
+same protocol and replace mock generation inside the worker.

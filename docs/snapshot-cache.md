@@ -11,7 +11,7 @@ Rules:
 - Невидимые слои не учитываются.
 - Bounds равны размеру canvas.
 - Прозрачность считается фоном, а не отдельным объектом.
-- Для RGB-входа модели прозрачные пиксели нужно композитить на стабильный фон.
+- Для RGB-входа модели прозрачные пиксели композитятся на стабильный белый фон.
 - Alpha/background mask нужно сохранить, чтобы полностью прозрачные области не
   предлагались как selectable segments.
 
@@ -42,18 +42,23 @@ Segment map, masks и metadata в MVP хранятся в памяти. Диск
 - цветовую модель/depth, если доступно;
 - registry id выбранной модели;
 - версию алгоритма подготовки сегментов;
-- exact fingerprint изображения.
+- fingerprint изображения.
 
 ## Exact Fingerprint
 
-MVP fingerprint должен быть консервативным:
+MVP fingerprint должен быть консервативным, но в текущей реализации это
+downscaled fingerprint, а не hash всех пикселей:
 
 1. Получить snapshot всего изображения.
-2. Downscale snapshot до `64x64` или `128x128`.
-3. Привести к stable RGB/RGBA U8 representation.
-4. Посчитать hash bytes.
+2. Композитить RGB input на белый фон.
+3. Сохранить alpha/background mask.
+4. Downscale RGB input и alpha mask до `128x128`.
+5. Привести к stable RGB/alpha U8 representation.
+6. Посчитать hash bytes.
 
-Для MVP используется exact match only.
+Для MVP используется exact match по fingerprint string. Так как fingerprint
+downscaled, он не гарантирует обнаружение каждого single-pixel изменения в
+полном размере изображения.
 
 ## Reuse Rules
 
@@ -63,6 +68,9 @@ MVP fingerprint должен быть консервативным:
 - Если fingerprint совпал, кэш можно использовать.
 - Если fingerprint не совпал, кэш невалиден.
 - Если есть сомнение, кэш нужно инвалидировать и пересчитать сегменты.
+
+Runtime rebuild при активном Smart Select debounce-ится на `300 ms`, чтобы
+частые `sigImageUpdated` события не перезапускали worker на каждый update.
 
 ## Follow-Ups
 

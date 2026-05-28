@@ -4,7 +4,9 @@
 #include "SegmentMap.h"
 
 #include <QPointer>
+#include <QSize>
 #include <QStringList>
+#include <QTimer>
 #include <kis_tool_select_base.h>
 
 class QLabel;
@@ -63,14 +65,46 @@ private:
         Cancelled
     };
 
+    struct SegmentCacheKey
+    {
+        QSize canvasSize;
+        QString modelId;
+        QString algorithmVersion;
+        QString fingerprint;
+
+        bool isValid() const
+        {
+            return canvasSize.isValid() && !modelId.isEmpty() && !algorithmVersion.isEmpty()
+                && !fingerprint.isEmpty();
+        }
+
+        bool operator==(const SegmentCacheKey& other) const
+        {
+            return canvasSize == other.canvasSize && modelId == other.modelId
+                && algorithmVersion == other.algorithmVersion && fingerprint == other.fingerprint;
+        }
+    };
+
+    struct PreparedSegmentCacheEntry
+    {
+        SegmentCacheKey key;
+        SegmentMap segmentMap;
+        bool valid = false;
+    };
+
     void prepareSegments();
+    void schedulePrepareSegments();
+    void runScheduledPrepareSegments();
     bool startWorkerIfNeeded();
-    void startMockPrepareJob();
+    void startPrepareJob(const SegmentCacheKey& cacheKey, const QString& imagePath,
+        const QString& alphaMaskPath, const QStringList& cleanupPaths);
     void cancelActiveJob();
     void setState(State state, const QString& message = QString());
     void updateOptionsUi();
     void clearPreparedData();
     void cleanupTempFiles(const QStringList& paths);
+    void clearActiveJobState();
+    QString fingerprintPrefix(const QString& fingerprint) const;
 
     void onWorkerProgress(int id, const QString& stage, double progress, bool hasProgress);
     void onWorkerResult(int id, const QString& segmentMapPath, const QString& segmentsPath,
@@ -97,6 +131,11 @@ private:
     QPointer<QProgressBar> m_progressBar;
     QPointer<QPushButton> m_cancelButton;
     QStringList m_pendingCleanupPaths;
+    QTimer *m_prepareDebounceTimer = nullptr;
+    PreparedSegmentCacheEntry m_cache;
+    SegmentCacheKey m_activeJobCacheKey;
+    QStringList m_activeJobCleanupPaths;
+    quintptr m_activeJobImagePtr = 0;
 };
 
 #endif // SMART_SELECT_TOOL_H_
