@@ -73,9 +73,11 @@ hover hit-test был O(1). Перебор всех masks на каждое дв
 Пока worker занят, UI не должен выглядеть зависшим:
 
 - На canvas или в tool options нужно показывать `Preparing smart segments...`.
-- Нужно показывать текущий stage: `resolving_model`,
+- Нужно показывать текущий stage: `checking_runtime`, `creating_runtime`,
+  `installing_runtime_dependencies`, `validating_runtime`, `resolving_model`,
   `checking_model_cache`, `downloading_model`, `verifying_model`,
-  `reading_image`, `generating_segments`, `building_hover_index`.
+  `reading_image`, `preprocessing_image`, `loading_model`, `running_sam`,
+  `building_segment_map`, `building_hover_index`.
 - Progress должен появляться быстро, даже если сначала он indeterminate.
 - Должна быть кнопка Cancel.
 - Если пользователь сменил tool, документ или закрыл изображение, job должен
@@ -114,11 +116,13 @@ MVP таргетирует конкретную версию Krita, а не ши
 - Tool Options status/progress/cancel block;
 - ModelRegistry для `sam2.1_hiera_large`;
 - worker-side checkpoint download/cache/verify;
+- worker-managed system Python venv/cache для SAM2 runtime;
+- real SAM2.1 Large automatic mask generation;
+- conversion from SAM masks to full-canvas `uint16` segment map;
 - runtime diagnostics foundation;
 - type checking and code tests.
 
 Ещё не реализовано:
 
-- SAM2/SAM2.1 inference;
 - model picker and lighter model presets;
 - persistent logs and support dialog.

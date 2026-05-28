@@ -28,7 +28,7 @@ Shared memory можно рассмотреть позже, если време�
 ### `prepare_segments`
 
 ```json
-{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","model_id":"sam2.1_hiera_large","algorithm_version":"mock-segments-model-readiness-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models"}}
+{"id":1,"method":"prepare_segments","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","model_id":"sam2.1_hiera_large","algorithm_version":"sam2.1-auto-mask-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime"}}
 ```
 
 Parameters:
@@ -44,15 +44,16 @@ Parameters:
 - `canvas_height`: высота canvas в image pixels.
 - `model_cache_dir`: writable directory для checkpoint cache. Обязателен для
   real model ids и может отсутствовать для `mock`.
+- `runtime_cache_dir`: writable directory для managed Python venv/cache.
+  Обязателен для real model ids и может отсутствовать для `mock`.
 
-Текущий readiness-stage использует `model_id="sam2.1_hiera_large"` и
-`algorithm_version="mock-segments-model-readiness-v1"`. Segment map пока mock,
-поэтому будущий SAM2 inference stage должен сменить `algorithm_version`.
+Текущий real-inference stage использует `model_id="sam2.1_hiera_large"` и
+`algorithm_version="sam2.1-auto-mask-v1"`.
 
 ### `diagnostics`
 
 ```json
-{"id":2,"method":"diagnostics","params":{"model_cache_dir":"/home/user/.local/share/krita/smart_select/models"}}
+{"id":2,"method":"diagnostics","params":{"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime"}}
 ```
 
 Возвращает Python/platform/torch/model-cache сведения для будущего Diagnostic
@@ -85,12 +86,19 @@ Fields:
 
 Expected MVP stages:
 
+- `checking_runtime`
+- `creating_runtime`
+- `installing_runtime_dependencies`
+- `validating_runtime`
 - `resolving_model`
 - `checking_model_cache`
 - `downloading_model`
 - `verifying_model`
 - `reading_image`
-- `generating_segments`
+- `preprocessing_image`
+- `loading_model`
+- `running_sam`
+- `building_segment_map`
 - `building_hover_index`
 
 `downloading_model` может добавлять extra fields:
@@ -104,7 +112,7 @@ C++ может игнорировать unknown fields.
 ## Success
 
 ```json
-{"id":1,"result":{"segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[{"id":1,"bbox":[0,0,100,100],"area":10000,"score":1.0}],"model":{"id":"sam2.1_hiera_large","title":"SAM2.1 Hiera Large","cache_state":"verified","checkpoint_bytes":898089053}}}
+{"id":1,"result":{"segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[{"id":1,"bbox":[0,0,100,100],"area":10000,"score":1.0}],"model":{"id":"sam2.1_hiera_large","title":"SAM2.1 Hiera Large","cache_state":"verified","checkpoint_bytes":898089053},"runtime":{"version":"sam2-runtime-v1","cache_state":"ready","device":"cuda","torch_version":"2.5.1","cuda_available":true,"sam2_source_ref":"2b90b9f5ceec907a1c18123530e92e794ad901a4"}}}
 ```
 
 Fields:
@@ -113,6 +121,7 @@ Fields:
 - `segments_path`: path to `.npz` segment data.
 - `metadata`: segment metadata list.
 - `model`: optional model readiness metadata for logs/diagnostics.
+- `runtime`: optional runtime/inference metadata for logs/diagnostics.
 
 Current MVP rule: C++ authoritative source for hover/click is
 `segment_map.npy`. Worker metadata is useful for logs/UI but must not be
@@ -133,10 +142,19 @@ Fields:
 Expected model readiness error types:
 
 - `UnknownModel`
+- `RuntimeCacheDirMissing`
+- `RuntimeBootstrapError`
+- `RuntimeDependencyError`
+- `RuntimeValidationError`
 - `ModelCacheDirMissing`
 - `ModelDownloadError`
 - `ModelVerificationError`
 - `ModelDownloadCancelled`
+- `InferenceDeviceError`
+- `InferenceOutOfMemory`
+- `InferenceFailed`
+- `ImageTooLarge`
+- `WorkerBusy`
 
 ## Segment Map Contract
 

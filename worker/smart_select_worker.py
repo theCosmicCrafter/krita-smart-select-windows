@@ -6,6 +6,7 @@ import shutil
 import struct
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import zipfile
@@ -18,6 +19,11 @@ WORKER_DIR = Path(__file__).resolve().parent
 if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
+import image_preprocessing  # noqa: E402
+import runtime_env  # noqa: E402
+import sam2_inference  # noqa: E402
+import segment_map_builder  # noqa: E402
+from job_runner import JobContext, JobRunner  # noqa: E402
 from model_cache import (  # noqa: E402
     ModelCache,
     ModelCacheDirMissing,
@@ -51,16 +57,20 @@ class PrepareSegmentsParams(TypedDict, total=False):
     canvas_width: int
     canvas_height: int
     model_cache_dir: str
+    runtime_cache_dir: str
 
 
 JsonObject = dict[str, Any]
 
 cancelled_jobs: set[int] = set()
+_emit_lock = threading.Lock()
+_job_runner: JobRunner | None = None
 
 
 def emit(message: JsonObject) -> None:
-    sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
-    sys.stdout.flush()
+    with _emit_lock:
+        sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
 
 
 def emit_progress(job_id: int, stage: str, progress: float | None = None) -> None:
@@ -251,6 +261,28 @@ def error_type_for_model_cache_error(error: ModelCacheError) -> str:
     return error.__class__.__name__
 
 
+def error_type_for_runtime_error(error: runtime_env.RuntimeEnvError) -> str:
+    if isinstance(error, runtime_env.RuntimeCacheDirMissing):
+        return "RuntimeCacheDirMissing"
+    if isinstance(error, runtime_env.RuntimeBootstrapError):
+        return "RuntimeBootstrapError"
+    if isinstance(error, runtime_env.RuntimeDependencyError):
+        return "RuntimeDependencyError"
+    if isinstance(error, runtime_env.RuntimeValidationError):
+        return "RuntimeValidationError"
+    return error.__class__.__name__
+
+
+def error_type_for_inference_error(error: sam2_inference.Sam2InferenceError) -> str:
+    if isinstance(error, sam2_inference.InferenceDeviceError):
+        return "InferenceDeviceError"
+    if isinstance(error, sam2_inference.InferenceOutOfMemory):
+        return "InferenceOutOfMemory"
+    if isinstance(error, sam2_inference.InferenceFailed):
+        return "InferenceFailed"
+    return error.__class__.__name__
+
+
 def model_result_payload(spec: ModelSpec, cache_status_actual_bytes: int | None) -> JsonObject:
     return {
         "id": spec.id,
@@ -260,7 +292,19 @@ def model_result_payload(spec: ModelSpec, cache_status_actual_bytes: int | None)
     }
 
 
-def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
+def is_job_cancelled(job_id: int, context: JobContext | None) -> bool:
+    return job_id in cancelled_jobs or (context is not None and context.is_cancelled())
+
+
+def log_worker_event(event: str, **fields: object) -> None:
+    parts = [f"[SmartSelectWorker] event={event}"]
+    parts.extend(f"{key}={value}" for key, value in fields.items())
+    print(" ".join(parts), file=sys.stderr, flush=True)
+
+
+def handle_prepare_segments(
+    job_id: int, params: Mapping[str, Any], context: JobContext | None = None
+) -> None:
     width_value = params.get("canvas_width", 512)
     height_value = params.get("canvas_height", 512)
     if width_value is None:
@@ -278,8 +322,24 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
         emit_error(job_id, "InvalidInput", "Canvas size is invalid")
         return
 
+    emit_progress(job_id, "resolving_model")
+    model_id_value = params.get("model_id", default_model_id())
+    model_id = (
+        model_id_value if isinstance(model_id_value, str) and model_id_value else default_model_id()
+    )
+    try:
+        model_spec = get_model_spec(model_id)
+    except ModelRegistryError:
+        emit_error(job_id, "UnknownModel", "unknown model")
+        return
+    if is_job_cancelled(job_id, context):
+        return
+
     image_path = params.get("image_path")
     if isinstance(image_path, str) and image_path and not Path(image_path).exists():
+        emit_error(job_id, "InvalidInput", "Snapshot image not found")
+        return
+    if model_spec.id != "mock" and (not isinstance(image_path, str) or not image_path):
         emit_error(job_id, "InvalidInput", "Snapshot image not found")
         return
 
@@ -294,21 +354,35 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
         if mask_width != width or mask_height != height:
             emit_error(job_id, "InvalidInput", "Alpha mask size does not match canvas size")
             return
+    if model_spec.id != "mock" and (not isinstance(alpha_mask_path, str) or not alpha_mask_path):
+        emit_error(job_id, "InvalidInput", "Alpha mask not found")
+        return
 
-    emit_progress(job_id, "resolving_model")
-    model_id_value = params.get("model_id", default_model_id())
-    model_id = (
-        model_id_value if isinstance(model_id_value, str) and model_id_value else default_model_id()
-    )
-    try:
-        model_spec = get_model_spec(model_id)
-    except ModelRegistryError:
-        emit_error(job_id, "UnknownModel", "unknown model")
-        return
-    if job_id in cancelled_jobs:
-        return
+    runtime_ready: runtime_env.RuntimeReady | None = None
+    if model_spec.id != "mock":
+        runtime_cache_dir_value = params.get("runtime_cache_dir")
+        if not isinstance(runtime_cache_dir_value, str) or not runtime_cache_dir_value:
+            emit_error(job_id, "RuntimeCacheDirMissing", "runtime cache is not writable")
+            return
+
+        def runtime_progress(
+            stage: str, progress: float | None, extra: Mapping[str, object]
+        ) -> None:
+            emit_progress_extra(job_id, stage, progress, extra)
+
+        try:
+            runtime_ready = runtime_env.ensure_runtime(
+                Path(runtime_cache_dir_value), runtime_progress, context
+            )
+        except runtime_env.RuntimeEnvError as exc:
+            emit_error(job_id, error_type_for_runtime_error(exc), str(exc))
+            return
+
+        if is_job_cancelled(job_id, context):
+            return
 
     cache_status_actual_bytes: int | None = None
+    checkpoint_path: Path | None = None
     if model_spec.requires_download:
         model_cache_dir_value = params.get("model_cache_dir")
         if not isinstance(model_cache_dir_value, str) or not model_cache_dir_value:
@@ -327,7 +401,7 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
             cache_status = model_cache.ensure_downloaded(
                 model_spec,
                 progress_callback,
-                lambda: job_id in cancelled_jobs,
+                lambda: is_job_cancelled(job_id, context),
             )
         except ModelDownloadCancelled:
             return
@@ -337,21 +411,88 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
 
         emit_progress(job_id, "verifying_model")
         cache_status_actual_bytes = cache_status.actual_bytes
-        if job_id in cancelled_jobs:
+        checkpoint_path = cache_status.checkpoint_path
+        if is_job_cancelled(job_id, context):
             return
 
     emit_progress(job_id, "reading_image")
     time.sleep(0.03)
-    if job_id in cancelled_jobs:
+    if is_job_cancelled(job_id, context):
         return
 
-    emit_progress(job_id, "generating_segments", 0.42)
-    segment_map, metadata = fake_segments(width, height)
-    if alpha_mask is not None:
-        apply_alpha_mask(segment_map, alpha_mask)
-        metadata = metadata_from_segment_map(segment_map, width, height)
+    runtime_payload: JsonObject | None = None
+    if model_spec.id == "mock":
+        emit_progress(job_id, "generating_segments", 0.42)
+        segment_map, metadata = fake_segments(width, height)
+        if alpha_mask is not None:
+            apply_alpha_mask(segment_map, alpha_mask)
+            metadata = metadata_from_segment_map(segment_map, width, height)
+    else:
+        if checkpoint_path is None or runtime_ready is None:
+            emit_error(job_id, "InferenceFailed", "SAM2 inference failed")
+            return
+        assert isinstance(image_path, str)
+        assert isinstance(alpha_mask_path, str)
+        emit_progress(job_id, "preprocessing_image")
+        try:
+            preprocessed = image_preprocessing.load_preprocessed_image(
+                image_path,
+                alpha_mask_path,
+                width,
+                height,
+                read_npy_uint8_2d,
+            )
+        except (OSError, ValueError) as exc:
+            emit_error(job_id, "InvalidInput", str(exc))
+            return
+        if preprocessed.resized:
+            log_worker_event(
+                "image.preprocess.resized",
+                canvas_width=width,
+                canvas_height=height,
+                inference_width=preprocessed.inference_width,
+                inference_height=preprocessed.inference_height,
+            )
+        if is_job_cancelled(job_id, context):
+            return
+
+        emit_progress(job_id, "loading_model")
+        log_worker_event("sam.generate.start", model_id=model_spec.id)
+        emit_progress(job_id, "running_sam")
+        try:
+            inference_result = sam2_inference.generate_masks(
+                model_spec, checkpoint_path, preprocessed.image_array
+            )
+        except sam2_inference.Sam2InferenceError as exc:
+            emit_error(job_id, error_type_for_inference_error(exc), str(exc))
+            return
+        runtime_payload = sam2_inference.runtime_result_payload(inference_result)
+        if is_job_cancelled(job_id, context):
+            return
+
+        emit_progress(job_id, "building_segment_map")
+        try:
+            build_result = segment_map_builder.build_segment_map_from_masks(
+                inference_result.masks,
+                canvas_width=preprocessed.canvas_width,
+                canvas_height=preprocessed.canvas_height,
+                inference_width=preprocessed.inference_width,
+                inference_height=preprocessed.inference_height,
+                alpha_mask=preprocessed.alpha_mask,
+            )
+        except ValueError as exc:
+            emit_error(job_id, "InferenceFailed", str(exc))
+            return
+        segment_map = build_result.segment_map
+        metadata = build_result.metadata
+        log_worker_event(
+            "segment_map.result",
+            segments=len(metadata),
+            nonzero_pixels=sum(1 for value in segment_map if value > 0),
+        )
+
     time.sleep(0.03)
-    if job_id in cancelled_jobs:
+    if is_job_cancelled(job_id, context):
         return
 
     emit_progress(job_id, "building_hover_index")
@@ -362,22 +503,26 @@ def handle_prepare_segments(job_id: int, params: Mapping[str, Any]) -> None:
     try:
         write_npy(segment_map_path, "<u2", (height, width), pack_uint16(segment_map))
         write_segments_npz(segments_path, metadata)
-        if job_id in cancelled_jobs:
+        if is_job_cancelled(job_id, context):
             shutil.rmtree(temp_dir, ignore_errors=True)
             return
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
 
+    result: JsonObject = {
+        "segment_map_path": str(segment_map_path),
+        "segments_path": str(segments_path),
+        "metadata": metadata,
+        "model": model_result_payload(model_spec, cache_status_actual_bytes),
+    }
+    if runtime_payload is not None:
+        result["runtime"] = runtime_payload
+
     emit(
         {
             "id": job_id,
-            "result": {
-                "segment_map_path": str(segment_map_path),
-                "segments_path": str(segments_path),
-                "metadata": metadata,
-                "model": model_result_payload(model_spec, cache_status_actual_bytes),
-            },
+            "result": result,
         }
     )
 
@@ -393,20 +538,45 @@ def handle_request(request: Mapping[str, Any]) -> None:
         return
 
     if method == "prepare_segments":
-        handle_prepare_segments(job_id, params_value)
+        runner = job_runner()
+        runner.start(job_id, params_value)
     elif method == "cancel":
-        cancelled_jobs.add(int(params_value.get("job_id") or 0))
+        cancelled_job_id = int(params_value.get("job_id") or 0)
+        cancelled_jobs.add(cancelled_job_id)
+        runner = job_runner()
+        runner.cancel(cancelled_job_id)
         emit({"id": job_id, "result": {"cancelled": True}})
     elif method == "diagnostics":
         model_cache_dir_value = params_value.get("model_cache_dir")
+        runtime_cache_dir_value = params_value.get("runtime_cache_dir")
         model_cache_dir = (
             Path(model_cache_dir_value)
             if isinstance(model_cache_dir_value, str) and model_cache_dir_value
             else None
         )
-        emit({"id": job_id, "result": collect_runtime_diagnostics(model_cache_dir)})
+        runtime_cache_dir = (
+            Path(runtime_cache_dir_value)
+            if isinstance(runtime_cache_dir_value, str) and runtime_cache_dir_value
+            else None
+        )
+        emit(
+            {
+                "id": job_id,
+                "result": collect_runtime_diagnostics(model_cache_dir, runtime_cache_dir),
+            }
+        )
     else:
         emit_error(job_id, "UnknownMethod", f"Unsupported method: {method}")
+
+
+def job_runner() -> JobRunner:
+    global _job_runner
+    if _job_runner is None:
+        _job_runner = JobRunner(
+            lambda context, params: handle_prepare_segments(context.job_id, params, context),
+            emit_error,
+        )
+    return _job_runner
 
 
 def main() -> None:

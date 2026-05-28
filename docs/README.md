@@ -13,10 +13,12 @@ Krita Smart Select - плагин для Krita, который помогает 
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files.
-- Current implementation: canvas spike, worker-backed mock segmentation,
-  flattened snapshot export, alpha mask handling, in-memory cache reuse,
-  SAM2.1 Large registry/download/cache verification and diagnostics foundation.
-- Not implemented yet: SAM2 inference.
+- Current implementation: native canvas flow, flattened snapshot export,
+  alpha mask handling, in-memory cache reuse, SAM2.1 Large
+  registry/download/cache verification, automatic runtime bootstrap and real
+  SAM2.1 Large inference in the worker.
+- Not implemented yet: model picker, lighter presets, persistent logs and
+  support dialog.
 
 ## Где Что Искать
 
@@ -25,6 +27,7 @@ Krita Smart Select - плагин для Krita, который помогает 
 - [Worker Protocol](worker-protocol.md): NDJSON protocol, temp files, segment map contract.
 - [Snapshot And Cache](snapshot-cache.md): input image, exact fingerprint, cache rules.
 - [Models](models.md): SAM2 strategy, ModelRegistry, model download/cache.
+- [Runtime Environment](runtime-env.md): managed venv/cache for PyTorch/SAM2.
 - [Observability](engineering/observability.md): logs, diagnostic report, support flow.
 - [Typing](engineering/typing.md): mypy, local stubs, typed boundaries.
 - [Testing](engineering/testing.md): test layers, current coverage, commands.

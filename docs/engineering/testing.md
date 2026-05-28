@@ -39,7 +39,7 @@ Manual smoke остаётся нужным для canvas/tool поведения
 1. Enable plugin.
 2. Activate Smart Select.
 3. Confirm preparing/ready state in Tool Options.
-4. Hover fake segments.
+4. Hover prepared SAM2 segments.
 5. Confirm red overlay.
 6. Click hovered segment.
 7. Confirm Krita selection.
@@ -62,6 +62,19 @@ The script runs:
 6. C++ QtTest target build.
 7. CTest for `smartselect_core_tests`.
 
+## Opt-In Real SAM2 Smoke
+
+The real SAM2 smoke is intentionally not part of the default suite because it
+may install PyTorch/SAM2 and download the SAM2.1 Large checkpoint:
+
+```bash
+SMART_SELECT_RUN_SAM2_SMOKE=1 ./scripts/test-sam2-smoke.sh
+```
+
+It creates a tiny synthetic snapshot, uses the normal worker protocol, writes
+runtime/model caches under Krita user data by default and verifies that the
+worker returns a non-empty segment map.
+
 ## Current Covered Cases
 
 Python worker tests cover:
@@ -76,12 +89,22 @@ Python worker tests cover:
 - model download failures log stable error type and short reason to stderr;
 - runtime diagnostics succeeds without torch installed;
 - runtime diagnostics reports model cache state;
+- runtime status detects ready and invalid runtime markers;
+- runtime bootstrap rejects plugin-source cache paths;
+- SAM2 inference wrapper chooses CUDA when available;
+- SAM2 inference wrapper falls back to CPU only when CUDA is unavailable;
+- CUDA OOM maps to `InferenceOutOfMemory`;
+- SAM2 generator is cached inside the worker process;
+- image preprocessing caps inference long side at `2048`;
+- SAM mask conversion excludes transparent alpha pixels;
+- SAM mask conversion resolves overlaps by score/stability/area priority;
+- tiny masks are dropped from segment maps;
 - fake segmentation creates 3 segments;
 - segment metadata is produced;
 - generated segment map is hit-testable;
 - `prepare_segments` emits progress events;
-- real model readiness with a pre-seeded verified cache emits model stages;
-- missing real model cache dir is rejected;
+- real model with fake SAM emits runtime/model/inference stages;
+- missing real model runtime dir is rejected;
 - unknown model id is rejected;
 - `diagnostics` request returns runtime info;
 - worker writes valid `.npy <u2`;
@@ -116,12 +139,12 @@ C++ tests cover:
 - fully transparent snapshots are detected;
 - `writeUint8Npy()` writes valid NumPy headers;
 - `writeUint8Npy()` rejects wrong payload sizes.
-- `prepare_segments` request serialization includes `model_cache_dir`.
+- `prepare_segments` request serialization includes `model_cache_dir` and
+  `runtime_cache_dir`.
 
 ## Future Test Additions
 
 - Cache key invalidation tests.
-- SAM2 result conversion tests.
 - Worker crash/error tests.
 - Selection modifier mapping tests.
 - Coordinate mapping tests around zoom/pan where feasible.

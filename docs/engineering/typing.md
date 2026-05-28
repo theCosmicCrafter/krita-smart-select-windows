@@ -14,6 +14,8 @@
 
 - worker protocol;
 - model registry;
+- runtime environment bootstrap;
+- SAM2 mask-to-segment-map conversion;
 - cache keys;
 - snapshot metadata;
 - pure Python core modules;
@@ -26,6 +28,7 @@
 - Krita/PyQt adapter code;
 - dynamic UI integration;
 - ctypes native loader;
+- dynamic imports for optional runtime dependencies such as torch, PIL and SAM2;
 - места, где API Krita не имеет внятных Python stubs.
 
 ## Python Policy

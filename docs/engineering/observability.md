@@ -37,6 +37,11 @@
 
 - `setup.start`
 - `setup.failed`
+- `runtime.cache.path`
+- `runtime.cache.failed`
+- `runtime.setup.start`
+- `runtime.setup.progress`
+- `runtime.setup.failed`
 - `model.download.start`
 - `model.download.failed`
 - `model.download.progress`
@@ -48,8 +53,13 @@
 - `worker.start`
 - `worker.crashed`
 - `inference.start`
+- `inference.progress`
 - `inference.cancelled`
 - `inference.failed`
+- `inference.result`
+- `sam.generate.start`
+- `sam.generate.result`
+- `segment_map.result`
 - `selection.apply.failed`
 
 Stable event names важнее красивого текста. User-facing message может быть

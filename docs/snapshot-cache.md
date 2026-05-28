@@ -72,6 +72,15 @@ downscaled, он не гарантирует обнаружение каждог
 Runtime rebuild при активном Smart Select debounce-ится на `300 ms`, чтобы
 частые `sigImageUpdated` события не перезапускали worker на каждый update.
 
+Current real inference algorithm version:
+
+```text
+sam2.1-auto-mask-v1
+```
+
+Эта версия заменила `mock-segments-model-readiness-v1` и намеренно
+инвалидирует in-memory cache, созданный readiness/mock stage.
+
 ## Follow-Ups
 
 После MVP можно добавить:

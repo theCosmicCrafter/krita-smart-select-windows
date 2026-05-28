@@ -15,6 +15,7 @@ struct PrepareSegmentsRequest
     QString algorithmVersion;
     QString fingerprint;
     QString modelCacheDir;
+    QString runtimeCacheDir;
     QSize canvasSize;
 };
 
@@ -27,6 +28,7 @@ inline QJsonObject prepareSegmentsRequestJson(int id, const PrepareSegmentsReque
     params["algorithm_version"] = request.algorithmVersion;
     params["fingerprint"] = request.fingerprint;
     params["model_cache_dir"] = request.modelCacheDir;
+    params["runtime_cache_dir"] = request.runtimeCacheDir;
     params["canvas_width"] = request.canvasSize.width();
     params["canvas_height"] = request.canvasSize.height();
 

@@ -15,7 +15,7 @@ SAM3 может быть будущим backend, но ни одна фича п�
 
 ## Initial Curated Registry Candidates
 
-Текущий readiness-stage registry активирует только тяжёлую default-модель:
+Текущий inference registry активирует только тяжёлую default-модель:
 
 - SAM2.1 Hiera Large (`sam2.1_hiera_large`)
 
@@ -42,9 +42,8 @@ Hardware profile в `ModelRegistry` должен быть консерватив
   вариант.
 - SAM2/SAM2.1 Hiera Large: RAM 16-32 GB, VRAM 8-12 GB, quality/slow вариант.
 
-Для readiness-stage default выбран **SAM2.1 Hiera Large**, потому что первый
-real inference этап должен сразу проверять максимальное качество, а не быстрый
-минимальный путь.
+Для первого real inference этапа default выбран **SAM2.1 Hiera Large**, потому
+что нужно сразу проверять максимальное качество, а не быстрый минимальный путь.
 
 Automatic mask generation для Base Plus и Large нужно помечать как тяжёлую
 операцию. UI может предупреждать пользователя, если изображение большое или
@@ -122,7 +121,9 @@ UI-ветки.
 - typed `ModelRegistry`;
 - default model id `sam2.1_hiera_large`;
 - download/cache/verify checkpoint-а в worker process;
+- automatic SAM2 runtime bootstrap через user-level venv/cache;
+- real SAM2.1 Large automatic mask generation;
+- conversion from SAM masks to `uint16` segment map;
 - runtime diagnostics foundation.
 
-Real SAM2 inference ещё не реализован. Worker пока возвращает mock segment map
-после model readiness.
+Mock model id всё ещё поддерживается для быстрых тестов и development smoke.

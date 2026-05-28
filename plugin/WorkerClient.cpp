@@ -169,6 +169,14 @@ void WorkerClient::handleMessage(const QJsonObject& message)
 
     if (message.contains("result")) {
         const QJsonObject resultObject = message.value("result").toObject();
+        if (resultObject.contains(QStringLiteral("model"))) {
+            qInfo() << "[SmartSelect] event=inference.result.model"
+                    << "jobId" << id << "model" << resultObject.value(QStringLiteral("model"));
+        }
+        if (resultObject.contains(QStringLiteral("runtime"))) {
+            qInfo() << "[SmartSelect] event=inference.result.runtime"
+                    << "jobId" << id << "runtime" << resultObject.value(QStringLiteral("runtime"));
+        }
         Q_EMIT result(id, resultObject.value("segment_map_path").toString(),
             resultObject.value("segments_path").toString(),
             resultObject.value("metadata").toArray());

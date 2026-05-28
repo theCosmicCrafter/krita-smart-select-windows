@@ -8,6 +8,7 @@
 - `DESIGN.md` - короткий индекс, не основной дизайн-документ.
 - `docs/architecture.md` - C++/Python split и canvas tool rules.
 - `docs/worker-protocol.md` - NDJSON protocol и segment map contract.
+- `docs/runtime-env.md` - managed SAM2 venv/cache policy.
 - `docs/engineering/typing.md` - mypy/stubs policy.
 - `docs/engineering/testing.md` - текущие тесты и команды.
 - `docs/engineering/observability.md` - logging/diagnostics/support rules.
@@ -24,8 +25,10 @@
 - Runtime cache for MVP: in-memory only.
 - Current default real model: `sam2.1_hiera_large`.
 - Real model target: SAM2/SAM2.1 PyTorch, curated models only.
-- Current worker still returns mock segment maps after model readiness;
-  real SAM2 inference is a later stage.
+- Current real inference path uses SAM2.1 Large automatic mask generation.
+- Runtime venv/cache is managed automatically under Krita user data, not inside
+  plugin source.
+- Current algorithm version: `sam2.1-auto-mask-v1`.
 
 ## Не Переоткрывать Без Причины
 
@@ -34,6 +37,7 @@
 - Do not add GGUF/custom models/SAM3 to MVP scope.
 - Do not switch the default model back to Tiny/Small unless the product decision
   is explicitly reopened.
+- Do not install PyTorch/SAM2 into the plugin source tree.
 - Do not add prompt-based selection before the prepared segmentation workflow is
   stable.
 - Do not add GUI automation as an MVP requirement.

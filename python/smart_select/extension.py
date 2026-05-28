@@ -47,7 +47,7 @@ class SmartSelectExtension(Extension):
 
         for candidate in candidates:
             if candidate.exists():
-                python_executable = shutil.which("python3") or sys.executable
+                python_executable = _worker_executable(package_dir)
                 print(
                     "[SmartSelect] event=setup.native_library.load "
                     f"library={candidate} "
@@ -77,3 +77,10 @@ class SmartSelectExtension(Extension):
             flush=True,
         )
         raise RuntimeError(f"Smart Select native library was not found. Checked: {names}")
+
+
+def _worker_executable(package_dir: Path) -> str:
+    launcher = package_dir / "worker_launcher.py"
+    if launcher.exists() and shutil.which("uv") is not None:
+        return str(launcher)
+    return shutil.which("python3") or sys.executable

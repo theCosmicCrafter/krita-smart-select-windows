@@ -35,7 +35,7 @@ constexpr int PREPARE_DEBOUNCE_MS = 300;
 
 const QString DEFAULT_MODEL_ID = QStringLiteral("sam2.1_hiera_large");
 const QString DEFAULT_MODEL_TITLE = QStringLiteral("SAM2.1 Large");
-const QString ALGORITHM_VERSION = QStringLiteral("mock-segments-model-readiness-v1");
+const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-auto-mask-v1");
 
 } // namespace
 
@@ -271,6 +271,7 @@ void SmartSelectTool::startPrepareJob(const SegmentCacheKey& cacheKey, const QSt
     const QRect bounds = currentImage()->bounds();
     const SmartSelectRuntimeConfig& config = SmartSelectRuntimeConfig::instance();
     const QString modelCacheDir = config.modelCacheDir();
+    const QString runtimeCacheDir = config.runtimeCacheDir();
     if (modelCacheDir.isEmpty() || !QDir().mkpath(modelCacheDir)
         || !QFileInfo(modelCacheDir).isWritable()) {
         qWarning() << "[SmartSelect] event=model.cache.failed"
@@ -280,9 +281,20 @@ void SmartSelectTool::startPrepareJob(const SegmentCacheKey& cacheKey, const QSt
         setState(State::Error, i18n("model cache is not writable"));
         return;
     }
+    if (runtimeCacheDir.isEmpty() || !QDir().mkpath(runtimeCacheDir)
+        || !QFileInfo(runtimeCacheDir).isWritable()) {
+        qWarning() << "[SmartSelect] event=runtime.cache.failed"
+                   << "reason=runtime_cache_not_writable"
+                   << "runtimeCacheDir" << runtimeCacheDir;
+        cleanupTempFiles(cleanupPaths);
+        setState(State::Error, i18n("runtime cache is not writable"));
+        return;
+    }
 
     qInfo() << "[SmartSelect] event=model.cache.path"
             << "modelCacheDir" << modelCacheDir;
+    qInfo() << "[SmartSelect] event=runtime.cache.path"
+            << "runtimeCacheDir" << runtimeCacheDir;
 
     PrepareSegmentsRequest request;
     request.imagePath = imagePath;
@@ -291,6 +303,7 @@ void SmartSelectTool::startPrepareJob(const SegmentCacheKey& cacheKey, const QSt
     request.algorithmVersion = cacheKey.algorithmVersion;
     request.fingerprint = cacheKey.fingerprint;
     request.modelCacheDir = modelCacheDir;
+    request.runtimeCacheDir = runtimeCacheDir;
     request.canvasSize = bounds.size();
 
     m_activeJobId = m_worker->prepareSegments(request);
@@ -403,6 +416,18 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
     if (stage == QStringLiteral("resolving_model")) {
         return i18n("Preparing model...");
     }
+    if (stage == QStringLiteral("checking_runtime")) {
+        return i18n("Checking SAM2 runtime...");
+    }
+    if (stage == QStringLiteral("creating_runtime")) {
+        return i18n("Creating SAM2 runtime...");
+    }
+    if (stage == QStringLiteral("installing_runtime_dependencies")) {
+        return i18n("Installing SAM2 runtime...");
+    }
+    if (stage == QStringLiteral("validating_runtime")) {
+        return i18n("Validating SAM2 runtime...");
+    }
     if (stage == QStringLiteral("checking_model_cache")) {
         return i18n("Checking model cache...");
     }
@@ -414,6 +439,18 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
     }
     if (stage == QStringLiteral("reading_image")) {
         return i18n("Reading image...");
+    }
+    if (stage == QStringLiteral("preprocessing_image")) {
+        return i18n("Preparing image...");
+    }
+    if (stage == QStringLiteral("loading_model")) {
+        return i18n("Loading SAM2.1 Large...");
+    }
+    if (stage == QStringLiteral("running_sam")) {
+        return i18n("Running SAM2.1 Large...");
+    }
+    if (stage == QStringLiteral("building_segment_map")) {
+        return i18n("Building segments...");
     }
     if (stage == QStringLiteral("generating_segments")) {
         return i18n("Preparing smart segments...");

@@ -191,6 +191,7 @@ class SmartSelectWorkerTests(unittest.TestCase):
                 self.worker.handle_prepare_segments(
                     13,
                     {
+                        "model_id": "mock",
                         "alpha_mask_path": str(alpha_path),
                         "canvas_width": 32,
                         "canvas_height": 24,
@@ -198,9 +199,9 @@ class SmartSelectWorkerTests(unittest.TestCase):
                 )
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
-        self.assertEqual(messages[0]["error"]["type"], "InvalidInput")
+        self.assertEqual(messages[-1]["error"]["type"], "InvalidInput")
         self.assertEqual(
-            messages[0]["error"]["message"], "Alpha mask size does not match canvas size"
+            messages[-1]["error"]["message"], "Alpha mask size does not match canvas size"
         )
 
     def test_prepare_segments_real_model_with_verified_cache_uses_model_stages(self) -> None:
@@ -212,6 +213,10 @@ class SmartSelectWorkerTests(unittest.TestCase):
             model_dir.mkdir(parents=True)
             checkpoint = model_dir / "sam2.1_hiera_large.pt"
             checkpoint.write_bytes(b"verified")
+            image_path = Path(temp_dir) / "snapshot.png"
+            alpha_path = Path(temp_dir) / "alpha.npy"
+            image_path.write_bytes(b"placeholder")
+            self.worker.write_npy(alpha_path, "|u1", (24, 32), b"\xff" * (32 * 24))
             spec = self.worker.ModelSpec(
                 id="sam2.1_hiera_large",
                 title="SAM2.1 Hiera Large",
@@ -227,16 +232,77 @@ class SmartSelectWorkerTests(unittest.TestCase):
                 requires_download=True,
             )
             original_get_model_spec = self.worker.get_model_spec
+            original_ensure_runtime = self.worker.runtime_env.ensure_runtime
+            original_load_preprocessed = self.worker.image_preprocessing.load_preprocessed_image
+            original_generate_masks = self.worker.sam2_inference.generate_masks
             self.worker.get_model_spec = lambda _model_id: spec
+
+            def fake_ensure_runtime(_root: Path, progress: Any, _context: Any = None) -> Any:
+                progress("checking_runtime", None, {})
+                progress("validating_runtime", None, {})
+                return self.worker.runtime_env.RuntimeReady(
+                    root=Path(temp_dir) / "runtime",
+                    venv_path=Path(temp_dir) / "runtime" / "venv",
+                    python_executable=Path(temp_dir) / "runtime" / "venv" / "bin" / "python",
+                    site_packages=Path(temp_dir) / "runtime" / "venv" / "site-packages",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                )
+
+            mask = [[False for _x in range(32)] for _y in range(24)]
+            for y in range(4, 14):
+                for x in range(5, 17):
+                    mask[y][x] = True
+
+            def fake_load_preprocessed(
+                _image_path: str | Path,
+                _alpha_mask_path: str | Path,
+                _canvas_width: int,
+                _canvas_height: int,
+                _alpha_reader: Any,
+            ) -> Any:
+                return self.worker.image_preprocessing.PreprocessedImage(
+                    image_array=object(),
+                    alpha_mask=b"\xff" * (32 * 24),
+                    canvas_width=32,
+                    canvas_height=24,
+                    inference_width=32,
+                    inference_height=24,
+                    resized=False,
+                )
+
+            def fake_generate_masks(
+                _spec: Any, _checkpoint_path: Path, _image_array: object
+            ) -> Any:
+                return self.worker.sam2_inference.Sam2InferenceResult(
+                    masks=[
+                        {
+                            "segmentation": mask,
+                            "bbox": [5, 4, 12, 10],
+                            "area": 120,
+                            "predicted_iou": 0.98,
+                            "stability_score": 0.96,
+                        }
+                    ],
+                    device="cuda",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                )
+
+            self.worker.runtime_env.ensure_runtime = fake_ensure_runtime
+            self.worker.image_preprocessing.load_preprocessed_image = fake_load_preprocessed
+            self.worker.sam2_inference.generate_masks = fake_generate_masks
             try:
                 with contextlib.redirect_stdout(output):
                     self.worker.handle_prepare_segments(
                         14,
                         {
-                            "image_path": "",
+                            "image_path": str(image_path),
+                            "alpha_mask_path": str(alpha_path),
                             "model_cache_dir": str(cache_root),
+                            "runtime_cache_dir": str(Path(temp_dir) / "runtime"),
                             "model_id": "sam2.1_hiera_large",
-                            "algorithm_version": "mock-segments-model-readiness-v1",
+                            "algorithm_version": "sam2.1-auto-mask-v1",
                             "fingerprint": "fingerprint",
                             "canvas_width": 32,
                             "canvas_height": 24,
@@ -244,32 +310,48 @@ class SmartSelectWorkerTests(unittest.TestCase):
                     )
             finally:
                 self.worker.get_model_spec = original_get_model_spec
+                self.worker.runtime_env.ensure_runtime = original_ensure_runtime
+                self.worker.image_preprocessing.load_preprocessed_image = original_load_preprocessed
+                self.worker.sam2_inference.generate_masks = original_generate_masks
 
             messages = [json.loads(line) for line in output.getvalue().splitlines()]
             cleanup_dir = Path(messages[-1]["result"]["segment_map_path"]).parent
             try:
                 self.assertEqual(
-                    [message.get("stage") for message in messages[:5]],
+                    [message.get("stage") for message in messages[:11]],
                     [
                         "resolving_model",
+                        "checking_runtime",
+                        "validating_runtime",
                         "checking_model_cache",
                         "verifying_model",
                         "reading_image",
-                        "generating_segments",
+                        "preprocessing_image",
+                        "loading_model",
+                        "running_sam",
+                        "building_segment_map",
+                        "building_hover_index",
                     ],
                 )
                 self.assertEqual(messages[-1]["result"]["model"]["id"], "sam2.1_hiera_large")
                 self.assertEqual(messages[-1]["result"]["model"]["checkpoint_bytes"], 8)
+                self.assertEqual(messages[-1]["result"]["runtime"]["device"], "cuda")
             finally:
                 if cleanup_dir is not None:
                     shutil.rmtree(cleanup_dir, ignore_errors=True)
 
-    def test_prepare_segments_real_model_without_cache_dir_returns_error(self) -> None:
+    def test_prepare_segments_real_model_without_runtime_dir_returns_error(self) -> None:
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with tempfile.TemporaryDirectory() as temp_dir, contextlib.redirect_stdout(output):
+            image_path = Path(temp_dir) / "snapshot.png"
+            alpha_path = Path(temp_dir) / "alpha.npy"
+            image_path.write_bytes(b"placeholder")
+            self.worker.write_npy(alpha_path, "|u1", (24, 32), b"\xff" * (32 * 24))
             self.worker.handle_prepare_segments(
                 15,
                 {
+                    "image_path": str(image_path),
+                    "alpha_mask_path": str(alpha_path),
                     "model_id": "sam2.1_hiera_large",
                     "canvas_width": 32,
                     "canvas_height": 24,
@@ -277,7 +359,7 @@ class SmartSelectWorkerTests(unittest.TestCase):
             )
 
         messages = [json.loads(line) for line in output.getvalue().splitlines()]
-        self.assertEqual(messages[-1]["error"]["type"], "ModelCacheDirMissing")
+        self.assertEqual(messages[-1]["error"]["type"], "RuntimeCacheDirMissing")
 
     def test_prepare_segments_unknown_model_returns_error(self) -> None:
         output = io.StringIO()

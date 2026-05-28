@@ -51,3 +51,13 @@ QString SmartSelectRuntimeConfig::modelCacheDir() const
 
     return QDir(base).filePath(QStringLiteral("smart_select/models"));
 }
+
+QString SmartSelectRuntimeConfig::runtimeCacheDir() const
+{
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (base.isEmpty()) {
+        base = QDir::homePath() + QStringLiteral("/.local/share/krita-smart-select");
+    }
+
+    return QDir(base).filePath(QStringLiteral("smart_select/runtime"));
+}

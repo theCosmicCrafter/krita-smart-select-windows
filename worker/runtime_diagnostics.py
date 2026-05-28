@@ -9,6 +9,8 @@ from typing import Any
 
 from model_cache import ModelCache
 from model_registry import all_model_specs
+from runtime_env import runtime_status
+from runtime_manifest import RUNTIME_VERSION, SAM2_SOURCE_REF
 
 JsonObject = dict[str, Any]
 
@@ -45,7 +47,33 @@ def _torch_diagnostics() -> JsonObject:
     }
 
 
-def collect_runtime_diagnostics(model_cache_dir: Path | None) -> JsonObject:
+def _runtime_diagnostics(runtime_cache_dir: Path | None) -> JsonObject:
+    if runtime_cache_dir is None:
+        return {
+            "cache_state": "missing",
+            "runtime_version": RUNTIME_VERSION,
+            "venv_exists": False,
+            "python_executable": None,
+            "sam2_source_ref": SAM2_SOURCE_REF,
+            "sam2_importable": False,
+            "torch_importable": False,
+        }
+
+    status = runtime_status(runtime_cache_dir)
+    return {
+        "cache_state": status.state,
+        "runtime_version": status.version or RUNTIME_VERSION,
+        "venv_exists": status.venv_path.exists(),
+        "python_executable": str(status.python_executable),
+        "sam2_source_ref": status.sam2_source_ref or SAM2_SOURCE_REF,
+        "sam2_importable": False,
+        "torch_importable": False,
+    }
+
+
+def collect_runtime_diagnostics(
+    model_cache_dir: Path | None, runtime_cache_dir: Path | None = None
+) -> JsonObject:
     models: list[JsonObject] = []
     cache = ModelCache(model_cache_dir) if model_cache_dir is not None else None
     for spec in all_model_specs():
@@ -72,5 +100,6 @@ def collect_runtime_diagnostics(model_cache_dir: Path | None) -> JsonObject:
             "machine": platform.machine(),
         },
         "torch": _torch_diagnostics(),
+        "runtime": _runtime_diagnostics(runtime_cache_dir),
         "models": models,
     }
