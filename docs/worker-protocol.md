@@ -31,7 +31,7 @@ Shared memory можно рассмотреть позже, если време�
 Primary MVP request for the lasso workflow:
 
 ```json
-{"id":1,"method":"prepare_selection","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","region_mask_path":"/tmp/region_mask.npy","region_bbox":[100,120,420,360],"model_id":"sam2.1_hiera_large","algorithm_version":"sam2.1-lasso-selection-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime"}}
+{"id":1,"method":"prepare_selection","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","region_mask_path":"/tmp/region_mask.npy","region_bbox":[100,120,420,360],"model_id":"sam2.1_hiera_large","algorithm_version":"sam2.1-lasso-selection-hard-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime"}}
 ```
 
 Parameters:
@@ -79,11 +79,11 @@ Parameters:
 - `runtime_cache_dir`: writable directory для managed Python venv/cache.
   Обязателен для real model ids и может отсутствовать для `mock`.
 
-Текущий реализованный real-inference stage использует
+Текущий MVP real-inference path использует `prepare_selection`,
 `model_id="sam2.1_hiera_large"` и
-`algorithm_version="sam2.1-auto-mask-quality-v1"`. Следующий lasso MVP stage
-должен перейти на `prepare_selection` и новую algorithm version, например
-`sam2.1-lasso-selection-v1`.
+`algorithm_version="sam2.1-lasso-selection-hard-v1"`. Legacy full-image
+`prepare_segments` path сохраняет собственную algorithm version только для
+spike/dev compatibility.
 
 ### `diagnostics`
 
@@ -261,6 +261,6 @@ Optional fields:
 ## Current Implementation Status
 
 Current worker implementation resolves and verifies `sam2.1_hiera_large` and
-runs real SAM2.1 Large automatic mask generation for the full-image spike. The
-next MVP implementation should add `prepare_selection` for lasso/region-prompted
-selection and make that the primary GUI path.
+uses `prepare_selection` for lasso/region-prompted selection as the primary GUI
+path. The full-image `prepare_segments` path remains available for spike/dev
+compatibility.

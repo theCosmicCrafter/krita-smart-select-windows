@@ -41,11 +41,30 @@ class _FakeGenerator:
         return [{"segmentation": [[True]], "bbox": [0, 0, 1, 1], "area": 1}]
 
 
+class _FakePredictor:
+    instances = 0
+    set_image_calls = 0
+
+    def __init__(self, _model: object, **_params: object) -> None:
+        _FakePredictor.instances += 1
+
+    def set_image(self, _image_array: object) -> None:
+        _FakePredictor.set_image_calls += 1
+
+    def predict(self, **kwargs: object) -> tuple[list[list[list[bool]]], list[float], object]:
+        if kwargs.get("multimask_output") is not True:
+            raise RuntimeError("multimask_output must be true")
+        return ([[[True]]], [0.9], object())
+
+
 class Sam2InferenceTests(unittest.TestCase):
     def setUp(self) -> None:
         sam2_inference._GENERATOR_CACHE.clear()
+        sam2_inference._PREDICTOR_CACHE.clear()
         _FakeGenerator.instances = 0
         _FakeGenerator.last_params = None
+        _FakePredictor.instances = 0
+        _FakePredictor.set_image_calls = 0
 
     def test_generate_masks_uses_cuda_when_available_and_caches_generator(self) -> None:
         with self._patched_imports(cuda_available=True), tempfile.TemporaryDirectory() as temp_dir:
@@ -100,6 +119,24 @@ class Sam2InferenceTests(unittest.TestCase):
             with self.assertRaises(sam2_inference.InferenceOutOfMemory):
                 sam2_inference.generate_masks(self._spec(), checkpoint, object())
 
+    def test_predict_selection_uses_predictor_and_caches_it(self) -> None:
+        with self._patched_imports(cuda_available=True), tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint = Path(temp_dir) / "model.pt"
+            checkpoint.write_bytes(b"checkpoint")
+
+            first = sam2_inference.predict_selection(
+                self._spec(), checkpoint, object(), (0.0, 0.0, 1.0, 1.0), ((0.0, 0.0),), (1,)
+            )
+            second = sam2_inference.predict_selection(
+                self._spec(), checkpoint, object(), (0.0, 0.0, 1.0, 1.0), ((0.0, 0.0),), (1,)
+            )
+
+        self.assertEqual(first.device, "cuda")
+        self.assertEqual(second.device, "cuda")
+        self.assertEqual(_FakePredictor.instances, 1)
+        self.assertEqual(_FakePredictor.set_image_calls, 2)
+        self.assertEqual(first.scores, [0.9])
+
     @staticmethod
     def _spec() -> ModelSpec:
         return ModelSpec(
@@ -137,6 +174,14 @@ class Sam2InferenceTests(unittest.TestCase):
                 return types.SimpleNamespace(build_sam2=lambda *_args, **_kwargs: object())
             if name == "sam2.automatic_mask_generator":
                 return types.SimpleNamespace(SAM2AutomaticMaskGenerator=generator_class)
+            if name == "sam2.sam2_image_predictor":
+                return types.SimpleNamespace(SAM2ImagePredictor=_FakePredictor)
+            if name == "numpy":
+                return types.SimpleNamespace(
+                    array=lambda value, dtype=None: value,
+                    float32="float32",
+                    int32="int32",
+                )
             return original_import_module(name)
 
         sam2_inference.importlib.import_module = fake_import_module

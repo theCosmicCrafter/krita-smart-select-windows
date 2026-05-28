@@ -129,23 +129,16 @@ UI-ветки.
 - default model id `sam2.1_hiera_large`;
 - download/cache/verify checkpoint-а в worker process;
 - automatic SAM2 runtime bootstrap через user-level venv/cache;
-- real SAM2.1 Large automatic mask generation для full-image spike;
-- conversion from SAM masks to `uint16` segment map;
+- real SAM2.1 Large predictor path для lasso/region selection;
+- conversion from SAM masks to full-canvas `uint8` selection mask;
 - runtime diagnostics foundation.
 
 Mock model id всё ещё поддерживается для быстрых тестов и development smoke.
 
-Текущие параметры automatic mask generation для реализованного full-image spike
-intentionally quality-first:
-
-- `points_per_side = 64`;
-- `crop_n_layers = 1`;
-- `crop_n_points_downscale_factor = 1`;
-- `stability_score_thresh = 0.95`;
-- `min_mask_region_area = 64`;
-- `use_m2m = True`;
-- `points_per_batch = 128`, чтобы целиться в машины с 16 GB VRAM и ускорить
-  генерацию через более крупные GPU batches.
+Current MVP quality path uses `SAM2ImagePredictor` with lasso-derived bbox,
+positive points and negative points. Full-image automatic mask generation
+remains available only in the legacy `prepare_segments` worker path for
+development compatibility.
 
 Follow-up: добавить настройку VRAM/performance budget в model picker. Для
 слабых GPU пользователь должен иметь возможность выбрать меньшую модель или

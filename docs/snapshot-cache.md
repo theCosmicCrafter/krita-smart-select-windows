@@ -19,24 +19,26 @@ Rules:
 
 Режим `sample current layer` является future work.
 
-## Cache Scope
+## Current Cache Scope
 
-Кэш lasso selection относится к изображению, region mask и выбранной модели.
-Full-image segment cache остаётся применимым для prepared hover/click spike, но
-не является главным MVP flow.
+Current lasso MVP не переиспользует selection results по snapshot fingerprint.
+Каждое завершённое lasso запускает новый `prepare_selection` job. Fingerprint
+снимка остаётся частью worker protocol и logs, но в текущем C++ path не
+используется для сравнения с прошлым изображением.
 
 MVP не пытается отдельно кэшировать:
 
 - активный слой;
 - отдельные layer modes.
 
-Segment map, masks и metadata в MVP хранятся в памяти. Дисковый кэш можно
-добавить позже, если подготовка сегментов окажется достаточно дорогой для
-частого пересчёта между сессиями.
+Runtime/model cache остаются активными: worker переиспользует managed SAM2
+runtime и verified checkpoint. Selection masks, region masks и snapshot temp
+files не кэшируются между lasso jobs.
 
-## Cache Key
+## Future Selection Cache Key
 
-Ключ кэша должен включать:
+Если позже будет добавлен result cache для lasso selection, ключ должен
+включать:
 
 - стабильный id документа, если его можно получить или сохранить;
 - размер изображения;
@@ -48,44 +50,27 @@ Segment map, masks и metadata в MVP хранятся в памяти. Диск
 
 ## Exact Fingerprint
 
-MVP fingerprint должен быть консервативным, но в текущей реализации это
-downscaled fingerprint, а не hash всех пикселей:
+Текущая реализация считает downscaled fingerprint snapshot-а, но не использует
+его для reuse selection result. Fingerprint нужен как protocol/debug field и
+как future input для selection cache:
 
 1. Получить snapshot всего изображения.
 2. Композитить RGB input на белый фон.
 3. Сохранить alpha/background mask.
-4. Сохранить или rasterize lasso region mask.
-5. Downscale RGB input, alpha mask и region mask до `128x128`.
-6. Привести к stable RGB/alpha/region U8 representation.
-7. Посчитать hash bytes.
+4. Downscale RGB input и alpha mask до `128x128`.
+5. Привести к stable RGB/alpha U8 representation.
+6. Посчитать hash bytes.
 
-Для MVP используется exact match по fingerprint string. Так как fingerprint
-downscaled, он не гарантирует обнаружение каждого single-pixel изменения в
-полном размере изображения.
-
-## Reuse Rules
-
-- Если размер изображения изменился, кэш невалиден.
-- Если model id изменился, кэш невалиден.
-- Если algorithm version изменилась, кэш невалиден.
-- Если lasso region изменилась, кэш невалиден.
-- Если fingerprint совпал, кэш можно использовать.
-- Если fingerprint не совпал, кэш невалиден.
-- Если есть сомнение, кэш нужно инвалидировать и пересчитать сегменты.
-
-Runtime rebuild при активном Smart Select debounce-ится на `300 ms`, чтобы
-частые `sigImageUpdated` события не перезапускали worker на каждый update.
-
-Current implemented full-image real inference algorithm version:
+Legacy full-image real inference algorithm version:
 
 ```text
 sam2.1-auto-mask-quality-v1
 ```
 
-Next lasso MVP algorithm version:
+Current lasso MVP algorithm version:
 
 ```text
-sam2.1-lasso-selection-v1
+sam2.1-lasso-selection-hard-v1
 ```
 
 Переход на lasso workflow намеренно инвалидирует in-memory cache, созданный
@@ -95,6 +80,7 @@ full-image automatic mask stage.
 
 После MVP можно добавить:
 
+- lasso selection result cache;
 - disk cache;
 - perceptual hash;
 - mean absolute difference;

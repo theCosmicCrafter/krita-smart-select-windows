@@ -214,8 +214,8 @@ class ModelCacheTests(unittest.TestCase):
                 )
 
         log = stderr.getvalue()
-        self.assertIn("event=model.download.failed", log)
-        self.assertIn("error_type=TimeoutError", log)
+        self.assertIn("event.name=model.download.failed", log)
+        self.assertIn("error.type=TimeoutError", log)
         self.assertIn("too slow", log)
 
     def test_protocol_download_failure_logs_error_reason_to_stderr(self) -> None:
@@ -230,8 +230,8 @@ class ModelCacheTests(unittest.TestCase):
                 ).ensure_downloaded(make_spec(), lambda *_args: None, lambda: False)
 
         log = stderr.getvalue()
-        self.assertIn("event=model.download.failed", log)
-        self.assertIn("error_type=ModelDownloadError", log)
+        self.assertIn("event.name=model.download.failed", log)
+        self.assertIn("error.type=ModelDownloadError", log)
         self.assertIn("missing content-range", log)
 
     def test_transient_download_failure_retries_range(self) -> None:

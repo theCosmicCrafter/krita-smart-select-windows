@@ -26,13 +26,12 @@
 - Runtime cache for MVP: in-memory only.
 - Current default real model: `sam2.1_hiera_large`.
 - Real model target: SAM2/SAM2.1 PyTorch, curated models only.
-- Current implemented inference path uses SAM2.1 Large automatic mask
-  generation for the full-image spike.
+- Current MVP inference path uses SAM2.1 Large lasso/region-prompted selection.
 - Current MVP product direction is lasso/region-prompted selection, not
   click-to-select from full-image prepared masks.
 - Runtime venv/cache is managed automatically under Krita user data, not inside
   plugin source.
-- Current algorithm version: `sam2.1-auto-mask-quality-v1`.
+- Current algorithm version: `sam2.1-lasso-selection-hard-v1`.
 
 ## Не Переоткрывать Без Причины
 
@@ -79,6 +78,12 @@ BUILD_JOBS=20 ./scripts/build-krita-5.3.1.sh
 ## Observability Rules
 
 - Use stable structured event names.
+- Logs must be OpenTelemetry-compatible by schema, but the MVP must not add an
+  OpenTelemetry SDK, OTLP exporter or network telemetry without an explicit
+  product decision.
+- Use `event.name`, not `event`, for structured log records.
+- Prefer dotted field names such as `job.id`, `job.type`, `model.id`,
+  `error.type`, `device.type`, `duration_ms` and `selection.area`.
 - Log worker lifecycle, inference lifecycle, cancellation, errors and cleanup.
 - Do not log image contents, pixel data, masks, tokens or secrets.
 - Redact home paths and document paths in user-facing diagnostic reports where

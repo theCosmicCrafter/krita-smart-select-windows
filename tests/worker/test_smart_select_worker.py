@@ -103,6 +103,84 @@ class SmartSelectWorkerTests(unittest.TestCase):
             if cleanup_dir is not None:
                 shutil.rmtree(cleanup_dir, ignore_errors=True)
 
+    def test_prepare_selection_mock_returns_uint8_selection_mask(self) -> None:
+        output = io.StringIO()
+        cleanup_dir: Path | None = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            image_path = temp / "snapshot.png"
+            image_path.write_bytes(b"placeholder")
+            alpha_path = temp / "alpha.npy"
+            region_path = temp / "region.npy"
+            self.worker.write_npy(alpha_path, "|u1", (8, 8), b"\xff" * 64)
+            region = bytearray(64)
+            for y in range(2, 6):
+                for x in range(2, 6):
+                    region[y * 8 + x] = 255
+            self.worker.write_npy(region_path, "|u1", (8, 8), bytes(region))
+
+            original_load_region_selection_input = (
+                self.worker.region_selection.load_region_selection_input
+            )
+
+            def fake_load_region_selection_input(
+                _image_path: str | Path,
+                _alpha_mask_path: str | Path,
+                _region_mask_path: str | Path,
+                _canvas_width: int,
+                _canvas_height: int,
+                _requested_region_bbox: list[int],
+                _alpha_reader: Any,
+            ) -> Any:
+                return self.worker.region_selection.RegionSelectionInput(
+                    crop_image_array=object(),
+                    crop_alpha_mask=b"\xff" * 64,
+                    crop_region_mask=bytes(region),
+                    crop_bbox=(0, 0, 8, 8),
+                    region_bbox=(2, 2, 4, 4),
+                    prompt_box_xyxy=(2.0, 2.0, 6.0, 6.0),
+                    point_coords=((4.0, 4.0),),
+                    point_labels=(1,),
+                    canvas_width=8,
+                    canvas_height=8,
+                )
+
+            self.worker.region_selection.load_region_selection_input = (
+                fake_load_region_selection_input
+            )
+            try:
+                with contextlib.redirect_stdout(output):
+                    self.worker.handle_prepare_selection(
+                        71,
+                        {
+                            "image_path": str(image_path),
+                            "alpha_mask_path": str(alpha_path),
+                            "region_mask_path": str(region_path),
+                            "region_bbox": [2, 2, 4, 4],
+                            "model_id": "mock",
+                            "fingerprint": "fingerprint",
+                            "canvas_width": 8,
+                            "canvas_height": 8,
+                        },
+                    )
+
+                messages = [json.loads(line) for line in output.getvalue().splitlines()]
+                result = messages[-1]["result"]
+                selection_mask_path = Path(result["selection_mask_path"])
+                cleanup_dir = selection_mask_path.parent
+                self.assertTrue(selection_mask_path.exists())
+                descr, shape, payload = parse_npy_header(selection_mask_path)
+                self.assertEqual(descr, "|u1")
+                self.assertEqual(shape, (8, 8))
+                self.assertEqual(payload[2 * 8 + 2], 255)
+                self.assertEqual(payload[0], 0)
+            finally:
+                self.worker.region_selection.load_region_selection_input = (
+                    original_load_region_selection_input
+                )
+                if cleanup_dir is not None:
+                    shutil.rmtree(cleanup_dir, ignore_errors=True)
+
     def test_prepare_segments_rejects_invalid_canvas_size(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

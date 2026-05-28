@@ -69,3 +69,34 @@ bool applySegmentSelection(KoCanvasBase *canvas, KisImageSP image, KisNodeSP nod
     applicator.end();
     return true;
 }
+
+bool applySelectionMask(KoCanvasBase *canvas, KisImageSP image, KisNodeSP node,
+    const SelectionMask& mask, SelectionAction action, int grow, int feather, bool antiAlias)
+{
+    KisCanvas2 *kisCanvas = dynamic_cast<KisCanvas2 *>(canvas);
+    if (!kisCanvas || !image || mask.isEmpty()) {
+        return false;
+    }
+
+    const QRect maskBounds = mask.selectedBounds();
+    const QByteArray bytes = mask.bytesForBounds(maskBounds);
+    if (maskBounds.isEmpty() || bytes.isEmpty()) {
+        return false;
+    }
+
+    KisPaintDeviceSP defaultDevice = image->projection();
+    KisPixelSelectionSP selection
+        = new KisPixelSelection(new KisSelectionDefaultBounds(defaultDevice));
+    selection->writeBytes(reinterpret_cast<const quint8 *>(bytes.constData()), maskBounds);
+    adjustSelection(selection, grow, feather, antiAlias);
+    selection->invalidateOutlineCache();
+
+    KisCursorOverrideLock cursorLock(KisCursor::waitCursor());
+    KisProcessingApplicator applicator(image, node, KisProcessingApplicator::NO_IMAGE_UPDATES,
+        KisImageSignalVector(), kundo2_i18n("Smart Select"));
+
+    KisSelectionToolHelper helper(kisCanvas, kundo2_i18n("Smart Select"));
+    helper.selectPixelSelection(applicator, selection, action);
+    applicator.end();
+    return true;
+}

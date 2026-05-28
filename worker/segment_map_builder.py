@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sys
 from array import array
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict, TypeGuard
+
+from observability import log_event
 
 MAX_UINT16_SEGMENTS = 65_535
 MIN_SEGMENT_AREA = 32
@@ -99,10 +100,11 @@ def build_segment_map_from_masks(
         )
 
     if truncated:
-        print(
-            "[SmartSelectWorker] event=segment_map.truncated max_segments=65535",
-            file=sys.stderr,
-            flush=True,
+        log_event(
+            "segment_map.truncated",
+            severity="warning",
+            component="worker",
+            **{"segments.max": MAX_UINT16_SEGMENTS},
         )
 
     return SegmentMapBuildResult(segment_map=segment_map, metadata=metadata, truncated=truncated)

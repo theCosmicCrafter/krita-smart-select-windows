@@ -74,10 +74,7 @@ SMART_SELECT_RUN_SAM2_SMOKE=1 ./scripts/test-sam2-smoke.sh
 
 It creates a tiny synthetic snapshot, uses the normal worker protocol, writes
 runtime/model caches under Krita user data by default and verifies that the
-worker returns a non-empty segment map.
-
-The current opt-in smoke still exercises the implemented full-image spike. It
-should be updated to cover `prepare_selection` when lasso MVP is implemented.
+worker returns a non-empty selection mask.
 
 ## Current Covered Cases
 
@@ -99,7 +96,13 @@ Python worker tests cover:
 - SAM2 inference wrapper falls back to CPU only when CUDA is unavailable;
 - CUDA OOM maps to `InferenceOutOfMemory`;
 - SAM2 generator is cached inside the worker process;
+- SAM2 predictor calls `set_image()` before `predict()`;
+- SAM2 predictor uses `multimask_output=True`;
 - image preprocessing caps inference long side at `2048`;
+- lasso region masks load as `uint8`;
+- lasso region bbox and prompt points are computed;
+- lasso selection masks are clipped to region and alpha;
+- low-overlap SAM candidates fall back to the lasso region;
 - SAM mask conversion excludes transparent alpha pixels;
 - SAM mask conversion resolves overlaps by score/stability/area priority;
 - tiny masks are dropped from segment maps;
@@ -108,6 +111,7 @@ Python worker tests cover:
 - generated segment map is hit-testable;
 - `prepare_segments` emits progress events;
 - real model with fake SAM emits runtime/model/inference stages;
+- mock `prepare_selection` returns a valid `selection_mask_path`;
 - missing real model runtime dir is rejected;
 - unknown model id is rejected;
 - `diagnostics` request returns runtime info;
@@ -145,6 +149,10 @@ C++ tests cover:
 - `writeUint8Npy()` rejects wrong payload sizes.
 - `prepare_segments` request serialization includes `model_cache_dir` and
   `runtime_cache_dir`.
+- `prepare_selection` request serialization includes lasso region fields and
+  runtime/model cache dirs;
+- `SelectionMask::loadNpy()` accepts valid `uint8` `.npy`;
+- lasso rasterization creates a non-empty bbox and mask bytes.
 
 ## Future Test Additions
 

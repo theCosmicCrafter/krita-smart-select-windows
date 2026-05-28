@@ -1,6 +1,9 @@
 #include "SmartSelectTool.h"
 
+#include "LassoRegionMask.h"
 #include "SelectionApply.h"
+#include "SelectionMask.h"
+#include "SmartSelectLog.h"
 #include "SmartSelectRuntimeConfig.h"
 #include "SnapshotCapture.h"
 #include "WorkerClient.h"
@@ -8,21 +11,20 @@
 #include <QCursor>
 #include <QDebug>
 #include <QDir>
-#include <QFileInfo>
 #include <QFile>
+#include <QFileInfo>
 #include <QIcon>
 #include <QJsonArray>
 #include <QLabel>
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QTimer>
 
 #include <KisOptionCollectionWidget.h>
 #include <KisViewManager.h>
 #include <KoPointerEvent.h>
 #include <canvas/kis_canvas2.h>
-#include <kis_canvas_resource_provider.h>
+#include <kis_cursor.h>
 #include <kis_floating_message.h>
 #include <kis_image.h>
 #include <kis_selection_tool_config_widget_helper.h>
@@ -31,29 +33,37 @@
 namespace
 {
 
-constexpr int PREPARE_DEBOUNCE_MS = 300;
-
 const QString DEFAULT_MODEL_ID = QStringLiteral("sam2.1_hiera_large");
-const QString DEFAULT_MODEL_TITLE = QStringLiteral("SAM2.1 Large");
-const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-auto-mask-quality-v1");
+const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-lasso-selection-hard-v1");
+
+QStringList appendPath(QStringList paths, const QString& path)
+{
+    if (!path.isEmpty()) {
+        paths.append(path);
+    }
+    return paths;
+}
 
 } // namespace
 
-SmartSelectTool::SmartSelectTool(KoCanvasBase *canvas)
-    : KisToolSelect(canvas, QCursor(Qt::CrossCursor), i18n("Smart Select"))
+SmartSelectOutlineBase::SmartSelectOutlineBase(KoCanvasBase *canvas)
+    : KisToolOutlineBase(canvas, KisToolOutlineBase::SELECT, QCursor(Qt::CrossCursor))
 {
     setObjectName("tool_smart_select");
-    m_prepareDebounceTimer = new QTimer(this);
-    m_prepareDebounceTimer->setSingleShot(true);
-    m_prepareDebounceTimer->setInterval(PREPARE_DEBOUNCE_MS);
-    connect(m_prepareDebounceTimer, &QTimer::timeout, this,
-        &SmartSelectTool::runScheduledPrepareSegments);
+}
+
+SmartSelectTool::SmartSelectTool(KoCanvasBase *canvas)
+    : KisToolSelectBase<SmartSelectOutlineBase>(canvas, i18n("Smart Select"))
+{
+    setObjectName("tool_smart_select");
 }
 
 SmartSelectTool::~SmartSelectTool()
 {
-    qInfo() << "[SmartSelect] event=tool.destroy.enter"
-            << "state" << int(m_state) << "activeJobId" << m_activeJobId;
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.destroy"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("enter") },
+            { QStringLiteral("tool.state"), int(m_state) },
+            { QStringLiteral("job.active_id"), m_activeJobId } });
 
     if (m_worker) {
         disconnect(m_worker, nullptr, this, nullptr);
@@ -62,162 +72,70 @@ SmartSelectTool::~SmartSelectTool()
     cleanupTempFiles(m_activeJobCleanupPaths);
     clearActiveJobState();
 
-    qInfo() << "[SmartSelect] event=tool.destroy.exit";
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.destroy"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("exit") } });
 }
 
 void SmartSelectTool::activate(const QSet<KoShape *>& shapes)
 {
-    qInfo() << "[SmartSelect] event=tool.activate.enter"
-            << "tool=SmartSelectTool"
-            << "state" << int(m_state) << "activeJobId" << m_activeJobId << "hasStatusWidget"
-            << !m_statusLabel.isNull();
-    KisToolSelect::activate(shapes);
-    qInfo() << "[SmartSelect] event=tool.activate.after_base";
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.activate"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("enter") },
+            { QStringLiteral("tool.name"), QStringLiteral("SmartSelectTool") },
+            { QStringLiteral("tool.state"), int(m_state) },
+            { QStringLiteral("job.active_id"), m_activeJobId },
+            { QStringLiteral("ui.status_widget.exists"), !m_statusLabel.isNull() } });
+
+    KisToolSelectBase<SmartSelectOutlineBase>::activate(shapes);
 
     if (KisImage *image = currentImage().data()) {
         connect(image, SIGNAL(sigImageUpdated(QRect)), this, SLOT(updateImage(QRect)),
             Qt::UniqueConnection);
-        qInfo() << "[SmartSelect] event=tool.activate.image_connected"
-                << "bounds" << image->bounds();
+        logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.activate"),
+            { { QStringLiteral("lifecycle.action"), QStringLiteral("image_connected") },
+                { QStringLiteral("image.bounds"), image->bounds() } });
     } else {
-        qWarning() << "[SmartSelect] event=tool.activate.no_image";
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("tool.activate"),
+            { { QStringLiteral("error.reason"), QStringLiteral("no_image") } });
     }
 
-    qInfo() << "[SmartSelect] event=tool.activate.prepare_begin";
-    prepareSegments();
-    qInfo() << "[SmartSelect] event=tool.activate.exit"
-            << "state" << int(m_state) << "activeJobId" << m_activeJobId;
+    setState(State::Idle);
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.activate"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("exit") },
+            { QStringLiteral("tool.state"), int(m_state) },
+            { QStringLiteral("job.active_id"), m_activeJobId } });
 }
 
 void SmartSelectTool::deactivate()
 {
-    qInfo() << "[SmartSelect] event=tool.deactivate.enter"
-            << "state" << int(m_state) << "activeJobId" << m_activeJobId << "hoverSegmentId"
-            << m_hoverSegmentId;
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.deactivate"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("enter") },
+            { QStringLiteral("tool.state"), int(m_state) },
+            { QStringLiteral("job.active_id"), m_activeJobId } });
 
     if (KisImage *image = currentImage().data()) {
         disconnect(image, SIGNAL(sigImageUpdated(QRect)), this, SLOT(updateImage(QRect)));
-        qInfo() << "[SmartSelect] event=tool.deactivate.image_disconnected";
+        logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.deactivate"),
+            { { QStringLiteral("lifecycle.action"), QStringLiteral("image_disconnected") } });
     }
 
-    if (m_prepareDebounceTimer) {
-        m_prepareDebounceTimer->stop();
-    }
     cancelActiveJob();
-
-    const quint16 oldHover = m_hoverSegmentId;
-    m_hoverSegmentId = 0;
-    requestSegmentUpdate(oldHover);
-    clearPreparedData();
     m_state = State::Idle;
     m_stageText.clear();
     m_progress = 0.0;
     m_hasProgress = false;
     m_errorMessage.clear();
 
-    KisToolSelect::deactivate();
-    qInfo() << "[SmartSelect] event=tool.deactivate.exit";
+    KisToolSelectBase<SmartSelectOutlineBase>::deactivate();
+    updateOptionsUi();
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.deactivate"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("exit") } });
 }
 
 void SmartSelectTool::updateImage(QRect const&)
 {
-    qInfo() << "[SmartSelect] event=tool.image.updated";
-    const quint16 oldHover = m_hoverSegmentId;
-    m_hoverSegmentId = 0;
-    requestSegmentUpdate(oldHover);
-    clearPreparedData();
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.image.updated"));
     cancelActiveJob();
-    setState(State::Preparing);
-    schedulePrepareSegments();
-}
-
-void SmartSelectTool::prepareSegments()
-{
-    cancelActiveJob();
-    m_hoverSegmentId = 0;
-    clearPreparedData();
-
-    if (!currentImage()) {
-        setState(State::Error, i18n("no active image"));
-        return;
-    }
-
-    setState(State::Preparing);
-
-    qInfo() << "[SmartSelect] event=snapshot.capture.start"
-            << "bounds" << currentImage()->bounds();
-    SnapshotInput snapshot;
-    QString error;
-    if (!captureSnapshot(currentImage(), &snapshot, &error)) {
-        qWarning() << "[SmartSelect] event=snapshot.capture.failed"
-                   << "reason" << error;
-        setState(State::Error, error);
-        return;
-    }
-
-    qInfo() << "[SmartSelect] event=snapshot.capture.succeeded"
-            << "canvasSize" << snapshot.canvasSize << "hasVisiblePixels"
-            << snapshot.hasVisiblePixels << "fingerprintPrefix"
-            << fingerprintPrefix(snapshot.fingerprint);
-
-    const SegmentCacheKey cacheKey {
-        snapshot.canvasSize,
-        DEFAULT_MODEL_ID,
-        ALGORITHM_VERSION,
-        snapshot.fingerprint,
-    };
-
-    if (!snapshot.hasVisiblePixels) {
-        m_cache = PreparedSegmentCacheEntry();
-        setState(State::Ready);
-        return;
-    }
-
-    if (m_cache.valid && m_cache.key == cacheKey && !m_cache.segmentMap.isEmpty()) {
-        qInfo() << "[SmartSelect] event=cache.hit"
-                << "modelId" << cacheKey.modelId << "algorithmVersion" << cacheKey.algorithmVersion
-                << "fingerprintPrefix" << fingerprintPrefix(cacheKey.fingerprint) << "segmentCount"
-                << m_cache.segmentMap.segmentCount();
-        m_segmentMap = m_cache.segmentMap;
-        setState(State::Ready);
-        if (currentImage()) {
-            canvas()->updateCanvas(currentImage()->pixelToDocument(currentImage()->bounds()));
-        }
-        return;
-    }
-
-    qInfo() << "[SmartSelect] event=cache.miss"
-            << "modelId" << cacheKey.modelId << "algorithmVersion" << cacheKey.algorithmVersion
-            << "fingerprintPrefix" << fingerprintPrefix(cacheKey.fingerprint);
-
-    if (!startWorkerIfNeeded()) {
-        return;
-    }
-
-    SnapshotFiles files;
-    if (!writeSnapshotFiles(snapshot, &files, &error)) {
-        qWarning() << "[SmartSelect] event=snapshot.files.failed"
-                   << "reason" << error;
-        setState(State::Error, error);
-        return;
-    }
-
-    startPrepareJob(cacheKey, files.imagePath, files.alphaMaskPath, files.cleanupPaths);
-}
-
-void SmartSelectTool::schedulePrepareSegments()
-{
-    qInfo() << "[SmartSelect] event=prepare.debounced"
-            << "delayMs" << PREPARE_DEBOUNCE_MS;
-    if (m_prepareDebounceTimer) {
-        m_prepareDebounceTimer->start();
-    }
-}
-
-void SmartSelectTool::runScheduledPrepareSegments()
-{
-    qInfo() << "[SmartSelect] event=prepare.debounce.fire";
-    prepareSegments();
+    setState(State::Idle);
 }
 
 bool SmartSelectTool::startWorkerIfNeeded()
@@ -226,6 +144,8 @@ bool SmartSelectTool::startWorkerIfNeeded()
         m_worker = new WorkerClient(this);
         connect(m_worker, &WorkerClient::progress, this, &SmartSelectTool::onWorkerProgress);
         connect(m_worker, &WorkerClient::result, this, &SmartSelectTool::onWorkerResult);
+        connect(m_worker, &WorkerClient::selectionResult, this,
+            &SmartSelectTool::onWorkerSelectionResult);
         connect(m_worker, &WorkerClient::error, this, &SmartSelectTool::onWorkerError);
         connect(m_worker, &WorkerClient::stderrLine, this, &SmartSelectTool::onWorkerStderr);
         connect(m_worker, &WorkerClient::crashed, this, &SmartSelectTool::onWorkerCrashed);
@@ -236,23 +156,24 @@ bool SmartSelectTool::startWorkerIfNeeded()
     const QString workerScript = config.workerScriptPath();
 
     if (pythonExecutable.isEmpty() || !QFileInfo::exists(pythonExecutable)) {
-        qWarning() << "[SmartSelect] event=worker.start.failed"
-                   << "reason=python_executable_not_found"
-                   << "pythonExecutable" << pythonExecutable;
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("worker.start.failed"),
+            { { QStringLiteral("error.reason"), QStringLiteral("python_executable_not_found") },
+                { QStringLiteral("python.executable.path"), pythonExecutable } });
         setState(State::Error, i18n("python executable not found"));
         return false;
     }
 
     if (workerScript.isEmpty() || !QFileInfo::exists(workerScript)) {
-        qWarning() << "[SmartSelect] event=worker.start.failed"
-                   << "reason=worker_script_not_found"
-                   << "workerScript" << workerScript;
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("worker.start.failed"),
+            { { QStringLiteral("error.reason"), QStringLiteral("worker_script_not_found") },
+                { QStringLiteral("worker.script.path"), workerScript } });
         setState(State::Error, i18n("worker script not found"));
         return false;
     }
 
-    qInfo() << "[SmartSelect] event=worker.start"
-            << "pythonExecutable" << pythonExecutable << "workerScript" << workerScript;
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("worker.start"),
+        { { QStringLiteral("python.executable.path"), pythonExecutable },
+            { QStringLiteral("worker.script.path"), workerScript } });
     if (!m_worker->start(pythonExecutable, workerScript)) {
         setState(State::Error, i18n("worker failed to start"));
         return false;
@@ -261,69 +182,156 @@ bool SmartSelectTool::startWorkerIfNeeded()
     return true;
 }
 
-void SmartSelectTool::startPrepareJob(const SegmentCacheKey& cacheKey, const QString& imagePath,
-    const QString& alphaMaskPath, const QStringList& cleanupPaths)
+void SmartSelectTool::finishOutline(const QVector<QPointF>& points)
 {
-    if (!currentImage() || !m_worker) {
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("lasso.finish"),
+        { { QStringLiteral("lasso.points.count"), points.size() },
+            { QStringLiteral("tool.state"), int(m_state) } });
+
+    if (!selectionEditable()) {
+        showNotEditableMessage();
+        return;
+    }
+    if (points.size() < 3) {
         return;
     }
 
-    const QRect bounds = currentImage()->bounds();
+    startSelectionJob(points);
+}
+
+void SmartSelectTool::beginShape()
+{
+    beginSelectInteraction();
+}
+
+void SmartSelectTool::endShape()
+{
+    endSelectInteraction();
+}
+
+void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
+{
+    cancelActiveJob();
+
+    if (!currentImage()) {
+        setState(State::Error, i18n("no active image"));
+        return;
+    }
+
+    LassoRegionMask regionMask;
+    QString error;
+    if (!buildLassoRegionMask(points, currentImage()->bounds().size(), &regionMask, &error)) {
+        logSmartSelectEvent(SmartSelectLogLevel::Warning,
+            QStringLiteral("lasso.region_mask.failed"),
+            { { QStringLiteral("error.reason"), error } });
+        setState(State::Error, error);
+        return;
+    }
+
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("lasso.region_mask.created"),
+        { { QStringLiteral("region.bbox"), regionMask.bbox },
+            { QStringLiteral("region.area"), regionMask.area } });
+
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("snapshot.capture.start"),
+        { { QStringLiteral("image.bounds"), currentImage()->bounds() } });
+    SnapshotInput snapshot;
+    if (!captureSnapshot(currentImage(), &snapshot, &error)) {
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("snapshot.capture.failed"),
+            { { QStringLiteral("error.reason"), error } });
+        setState(State::Error, error);
+        return;
+    }
+
+    if (!snapshot.hasVisiblePixels) {
+        setState(State::Error, i18n("image has no visible pixels"));
+        return;
+    }
+
+    SnapshotFiles files;
+    if (!writeSnapshotFiles(snapshot, &files, &error)) {
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("snapshot.files.failed"),
+            { { QStringLiteral("error.reason"), error } });
+        setState(State::Error, error);
+        return;
+    }
+
+    const QString regionMaskPath
+        = QDir(files.tempDirPath).filePath(QStringLiteral("region_mask.npy"));
+    if (!writeLassoRegionMaskNpy(regionMaskPath, regionMask, &error)) {
+        cleanupTempFiles(files.cleanupPaths);
+        logSmartSelectEvent(SmartSelectLogLevel::Warning,
+            QStringLiteral("lasso.region_mask.failed"),
+            { { QStringLiteral("error.reason"), error } });
+        setState(State::Error, error);
+        return;
+    }
+    files.cleanupPaths = appendPath(files.cleanupPaths, regionMaskPath);
+
+    if (!startWorkerIfNeeded()) {
+        cleanupTempFiles(files.cleanupPaths);
+        return;
+    }
+
     const SmartSelectRuntimeConfig& config = SmartSelectRuntimeConfig::instance();
     const QString modelCacheDir = config.modelCacheDir();
     const QString runtimeCacheDir = config.runtimeCacheDir();
     if (modelCacheDir.isEmpty() || !QDir().mkpath(modelCacheDir)
         || !QFileInfo(modelCacheDir).isWritable()) {
-        qWarning() << "[SmartSelect] event=model.cache.failed"
-                   << "reason=model_cache_not_writable"
-                   << "modelCacheDir" << modelCacheDir;
-        cleanupTempFiles(cleanupPaths);
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("model.cache.failed"),
+            { { QStringLiteral("error.reason"), QStringLiteral("model_cache_not_writable") },
+                { QStringLiteral("model.cache.dir"), modelCacheDir } });
+        cleanupTempFiles(files.cleanupPaths);
         setState(State::Error, i18n("model cache is not writable"));
         return;
     }
     if (runtimeCacheDir.isEmpty() || !QDir().mkpath(runtimeCacheDir)
         || !QFileInfo(runtimeCacheDir).isWritable()) {
-        qWarning() << "[SmartSelect] event=runtime.cache.failed"
-                   << "reason=runtime_cache_not_writable"
-                   << "runtimeCacheDir" << runtimeCacheDir;
-        cleanupTempFiles(cleanupPaths);
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("runtime.cache.failed"),
+            { { QStringLiteral("error.reason"), QStringLiteral("runtime_cache_not_writable") },
+                { QStringLiteral("runtime.cache.dir"), runtimeCacheDir } });
+        cleanupTempFiles(files.cleanupPaths);
         setState(State::Error, i18n("runtime cache is not writable"));
         return;
     }
 
-    qInfo() << "[SmartSelect] event=model.cache.path"
-            << "modelCacheDir" << modelCacheDir;
-    qInfo() << "[SmartSelect] event=runtime.cache.path"
-            << "runtimeCacheDir" << runtimeCacheDir;
-
-    PrepareSegmentsRequest request;
-    request.imagePath = imagePath;
-    request.alphaMaskPath = alphaMaskPath;
-    request.modelId = cacheKey.modelId;
-    request.algorithmVersion = cacheKey.algorithmVersion;
-    request.fingerprint = cacheKey.fingerprint;
+    PrepareSelectionRequest request;
+    request.imagePath = files.imagePath;
+    request.alphaMaskPath = files.alphaMaskPath;
+    request.regionMaskPath = regionMaskPath;
+    request.regionBbox = regionMask.bbox;
+    request.modelId = DEFAULT_MODEL_ID;
+    request.algorithmVersion = ALGORITHM_VERSION;
+    request.fingerprint = snapshot.fingerprint;
     request.modelCacheDir = modelCacheDir;
     request.runtimeCacheDir = runtimeCacheDir;
-    request.canvasSize = bounds.size();
+    request.canvasSize = snapshot.canvasSize;
 
-    m_activeJobId = m_worker->prepareSegments(request);
-    m_activeJobCacheKey = cacheKey;
-    m_activeJobCleanupPaths = cleanupPaths;
+    m_activeSelectionOptions.action = selectionAction();
+    m_activeSelectionOptions.grow = growSelection();
+    m_activeSelectionOptions.feather = featherSelection();
+    m_activeSelectionOptions.antiAlias = antiAliasSelection();
+
+    setState(State::Preparing);
+    m_activeJobId = m_worker->prepareSelection(request);
+    m_activeJobCleanupPaths = files.cleanupPaths;
     m_activeJobImagePtr = reinterpret_cast<quintptr>(currentImage().data());
-    qInfo() << "[SmartSelect] event=inference.start"
-            << "jobId" << m_activeJobId << "modelId" << cacheKey.modelId << "algorithmVersion"
-            << cacheKey.algorithmVersion << "fingerprintPrefix"
-            << fingerprintPrefix(cacheKey.fingerprint) << "canvasSize" << bounds.size();
-    qInfo() << "[SmartSelect] event=snapshot.files.written"
-            << "jobId" << m_activeJobId << "imagePath" << imagePath << "alphaMaskPath"
-            << alphaMaskPath;
+
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("selection.start"),
+        { { QStringLiteral("job.id"), m_activeJobId },
+            { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
+            { QStringLiteral("model.id"), request.modelId },
+            { QStringLiteral("algorithm.version"), request.algorithmVersion },
+            { QStringLiteral("image.fingerprint.prefix"), fingerprintPrefix(request.fingerprint) },
+            { QStringLiteral("image.size"), request.canvasSize },
+            { QStringLiteral("region.bbox"), request.regionBbox } });
 }
 
 void SmartSelectTool::cancelActiveJob()
 {
     if (m_worker && m_activeJobId != 0) {
-        qInfo() << "[SmartSelect] event=inference.cancelled"
-                << "jobId" << m_activeJobId;
+        logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("selection.cancelled"),
+            { { QStringLiteral("job.id"), m_activeJobId },
+                { QStringLiteral("job.type"), QStringLiteral("lasso_selection") } });
         m_worker->cancel(m_activeJobId);
     }
     cleanupTempFiles(m_activeJobCleanupPaths);
@@ -332,9 +340,11 @@ void SmartSelectTool::cancelActiveJob()
 
 void SmartSelectTool::setState(State state, const QString& message)
 {
-    qInfo() << "[SmartSelect] event=tool.state.change"
-            << "from" << int(m_state) << "to" << int(state) << "message" << message
-            << "hasStatusWidget" << !m_statusLabel.isNull();
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.state.change"),
+        { { QStringLiteral("tool.state.from"), int(m_state) },
+            { QStringLiteral("tool.state.to"), int(state) },
+            { QStringLiteral("error.message"), message },
+            { QStringLiteral("ui.status_widget.exists"), !m_statusLabel.isNull() } });
     m_state = state;
     if (state == State::Preparing) {
         m_stageText.clear();
@@ -343,7 +353,7 @@ void SmartSelectTool::setState(State state, const QString& message)
         m_errorMessage.clear();
     } else if (state == State::Error) {
         m_errorMessage = message;
-    } else if (state == State::Ready) {
+    } else if (state == State::Ready || state == State::Idle) {
         m_errorMessage.clear();
     }
 
@@ -359,11 +369,11 @@ void SmartSelectTool::updateOptionsUi()
             text = i18n("Smart Select");
             break;
         case State::Preparing:
-            text = m_stageText.isEmpty() ? i18n("Preparing smart segments...")
+            text = m_stageText.isEmpty() ? i18n("Preparing selection...")
                                          : friendlyStageText(m_stageText);
             break;
         case State::Ready:
-            text = i18n("%1: %2 segments", DEFAULT_MODEL_TITLE, m_segmentMap.segmentCount());
+            text = i18n("Smart Select: selection applied");
             break;
         case State::Error:
             text = i18n("Smart Select error: %1", m_errorMessage);
@@ -393,15 +403,9 @@ void SmartSelectTool::updateOptionsUi()
     }
 }
 
-void SmartSelectTool::clearPreparedData()
-{
-    m_segmentMap.clear();
-}
-
 void SmartSelectTool::clearActiveJobState()
 {
     m_activeJobId = 0;
-    m_activeJobCacheKey = SegmentCacheKey();
     m_activeJobCleanupPaths.clear();
     m_activeJobImagePtr = 0;
 }
@@ -413,9 +417,6 @@ QString SmartSelectTool::fingerprintPrefix(const QString& fingerprint) const
 
 QString SmartSelectTool::friendlyStageText(const QString& stage) const
 {
-    if (stage == QStringLiteral("resolving_model")) {
-        return i18n("Preparing model...");
-    }
     if (stage == QStringLiteral("checking_runtime")) {
         return i18n("Checking SAM2 runtime...");
     }
@@ -427,6 +428,9 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
     }
     if (stage == QStringLiteral("validating_runtime")) {
         return i18n("Validating SAM2 runtime...");
+    }
+    if (stage == QStringLiteral("resolving_model")) {
+        return i18n("Preparing model...");
     }
     if (stage == QStringLiteral("checking_model_cache")) {
         return i18n("Checking model cache...");
@@ -449,14 +453,8 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
     if (stage == QStringLiteral("running_sam")) {
         return i18n("Running SAM2.1 Large...");
     }
-    if (stage == QStringLiteral("building_segment_map")) {
-        return i18n("Building segments...");
-    }
-    if (stage == QStringLiteral("generating_segments")) {
-        return i18n("Preparing smart segments...");
-    }
-    if (stage == QStringLiteral("building_hover_index")) {
-        return i18n("Building hover map...");
+    if (stage == QStringLiteral("building_selection_mask")) {
+        return i18n("Building selection...");
     }
     return stage;
 }
@@ -466,7 +464,9 @@ void SmartSelectTool::cleanupTempFiles(const QStringList& paths)
     if (qEnvironmentVariableIsSet("SMART_SELECT_KEEP_DEBUG_FILES")) {
         for (const QString& path : paths) {
             if (!path.isEmpty() && QFileInfo::exists(path)) {
-                qInfo() << "[SmartSelect] event=temp_file.kept_for_debug" << "path" << path;
+                logSmartSelectEvent(SmartSelectLogLevel::Info,
+                    QStringLiteral("temp_file.kept_for_debug"),
+                    { { QStringLiteral("file.path"), path } });
             }
         }
         return;
@@ -480,16 +480,20 @@ void SmartSelectTool::cleanupTempFiles(const QStringList& paths)
         QFileInfo info(path);
         const QString parentPath = info.absolutePath();
         if (QFile::remove(path)) {
-            qInfo() << "[SmartSelect] event=temp_file.cleaned" << "path" << path;
+            logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("temp_file.cleaned"),
+                { { QStringLiteral("file.path"), path } });
         } else if (QFileInfo::exists(path)) {
-            qWarning() << "[SmartSelect] event=temp_file.cleanup_failed" << "path" << path;
+            logSmartSelectEvent(SmartSelectLogLevel::Warning,
+                QStringLiteral("temp_file.cleanup_failed"),
+                { { QStringLiteral("file.path"), path } });
         }
 
         QDir parent(parentPath);
         if (parent.dirName().startsWith(QStringLiteral("krita-smart-select-"))
             && parent.isEmpty()) {
             if (parent.rmdir(parentPath)) {
-                qInfo() << "[SmartSelect] event=temp_dir.cleaned" << "path" << parentPath;
+                logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("temp_dir.cleaned"),
+                    { { QStringLiteral("file.path"), parentPath } });
             }
         }
     }
@@ -502,9 +506,11 @@ void SmartSelectTool::onWorkerProgress(
         return;
     }
 
-    qInfo() << "[SmartSelect] event=inference.progress"
-            << "jobId" << id << "stage" << stage << "progress" << progress << "hasProgress"
-            << hasProgress;
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("selection.progress"),
+        { { QStringLiteral("job.id"), id },
+            { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
+            { QStringLiteral("job.stage"), stage }, { QStringLiteral("job.progress"), progress },
+            { QStringLiteral("job.progress.available"), hasProgress } });
     m_stageText = stage;
     m_progress = progress;
     m_hasProgress = hasProgress;
@@ -514,24 +520,42 @@ void SmartSelectTool::onWorkerProgress(
 void SmartSelectTool::onWorkerResult(
     int id, const QString& segmentMapPath, const QString& segmentsPath, const QJsonArray& metadata)
 {
-    const QStringList resultCleanupPaths { segmentMapPath, segmentsPath };
+    Q_UNUSED(metadata);
+    logSmartSelectEvent(SmartSelectLogLevel::Info,
+        QStringLiteral("inference.result.ignored_legacy"),
+        { { QStringLiteral("job.id"), id },
+            { QStringLiteral("job.type"), QStringLiteral("legacy_prepare_segments") },
+            { QStringLiteral("file.segment_map.path"), segmentMapPath } });
+    cleanupTempFiles(QStringList { segmentMapPath, segmentsPath });
+}
+
+void SmartSelectTool::onWorkerSelectionResult(int id, const QString& selectionMaskPath,
+    const QString& segmentsPath, const QJsonArray& metadata)
+{
+    const QStringList resultCleanupPaths { selectionMaskPath, segmentsPath };
     const bool staleImage = !currentImage()
         || reinterpret_cast<quintptr>(currentImage().data()) != m_activeJobImagePtr;
 
-    if (id != m_activeJobId || staleImage || !m_activeJobCacheKey.isValid()) {
-        qInfo() << "[SmartSelect] event=inference.result.ignored_stale"
-                << "jobId" << id << "activeJobId" << m_activeJobId << "staleImage" << staleImage;
+    if (id != m_activeJobId || staleImage) {
+        logSmartSelectEvent(SmartSelectLogLevel::Info,
+            QStringLiteral("selection.result.ignored_stale"),
+            { { QStringLiteral("job.id"), id }, { QStringLiteral("job.active_id"), m_activeJobId },
+                { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
+                { QStringLiteral("image.stale"), staleImage } });
         cleanupTempFiles(resultCleanupPaths);
         return;
     }
 
-    qInfo() << "[SmartSelect] event=inference.result"
-            << "jobId" << id << "segmentMapPath" << segmentMapPath << "segmentsPath" << segmentsPath
-            << "metadataCount" << metadata.size();
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("selection.result"),
+        { { QStringLiteral("job.id"), id },
+            { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
+            { QStringLiteral("file.selection_mask.path"), selectionMaskPath },
+            { QStringLiteral("file.segments.path"), segmentsPath },
+            { QStringLiteral("metadata.count"), metadata.size() } });
 
     QString error;
-    SegmentMap loadedMap;
-    if (!loadedMap.loadNpy(segmentMapPath, &error)) {
+    SelectionMask mask;
+    if (!mask.loadNpy(selectionMaskPath, &error)) {
         cleanupTempFiles(resultCleanupPaths);
         cleanupTempFiles(m_activeJobCleanupPaths);
         clearActiveJobState();
@@ -539,32 +563,37 @@ void SmartSelectTool::onWorkerResult(
         return;
     }
 
-    m_segmentMap = loadedMap;
-    m_cache.key = m_activeJobCacheKey;
-    m_cache.segmentMap = loadedMap;
-    m_cache.valid = !loadedMap.isEmpty();
+    const bool applied = applySelectionMask(canvas(), currentImage(), currentNode(), mask,
+        m_activeSelectionOptions.action, m_activeSelectionOptions.grow,
+        m_activeSelectionOptions.feather, m_activeSelectionOptions.antiAlias);
+
     cleanupTempFiles(m_activeJobCleanupPaths);
     clearActiveJobState();
-    setState(m_segmentMap.isEmpty() ? State::Error : State::Ready,
-        m_segmentMap.isEmpty() ? i18n("segment map is empty") : QString());
+    cleanupTempFiles(resultCleanupPaths);
 
-    if (currentImage()) {
-        canvas()->updateCanvas(currentImage()->pixelToDocument(currentImage()->bounds()));
+    if (!applied) {
+        setState(State::Error, i18n("selection is empty"));
+        return;
     }
 
-    cleanupTempFiles(resultCleanupPaths);
+    setState(State::Ready);
 }
 
 void SmartSelectTool::onWorkerError(int id, const QString& type, const QString& message)
 {
     if (id != 0 && id != m_activeJobId) {
-        qInfo() << "[SmartSelect] event=inference.error.ignored_stale"
-                << "jobId" << id << "type" << type << "message" << message;
+        logSmartSelectEvent(SmartSelectLogLevel::Info,
+            QStringLiteral("selection.error.ignored_stale"),
+            { { QStringLiteral("job.id"), id }, { QStringLiteral("job.active_id"), m_activeJobId },
+                { QStringLiteral("error.type"), type },
+                { QStringLiteral("error.message"), message } });
         return;
     }
 
-    qWarning() << "[SmartSelect] event=inference.failed"
-               << "jobId" << id << "type" << type << "message" << message;
+    logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("selection.failed"),
+        { { QStringLiteral("job.id"), id },
+            { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
+            { QStringLiteral("error.type"), type }, { QStringLiteral("error.message"), message } });
     cleanupTempFiles(m_activeJobCleanupPaths);
     clearActiveJobState();
     setState(State::Error, message);
@@ -572,12 +601,14 @@ void SmartSelectTool::onWorkerError(int id, const QString& type, const QString& 
 
 void SmartSelectTool::onWorkerStderr(const QString& line)
 {
-    qWarning() << "[SmartSelect] event=worker.stderr" << "line" << line;
+    logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("worker.stderr"),
+        { { QStringLiteral("worker.stderr.line"), line } });
 }
 
 void SmartSelectTool::onWorkerCrashed(const QString& message)
 {
-    qWarning() << "[SmartSelect] event=worker.crashed" << "message" << message;
+    logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("worker.crashed"),
+        { { QStringLiteral("error.message"), message } });
     if (m_state == State::Preparing || m_activeJobId != 0) {
         cleanupTempFiles(m_activeJobCleanupPaths);
         clearActiveJobState();
@@ -585,77 +616,16 @@ void SmartSelectTool::onWorkerCrashed(const QString& message)
     }
 }
 
-void SmartSelectTool::mouseMoveEvent(KoPointerEvent *event)
-{
-    if (m_state != State::Ready || m_segmentMap.isEmpty()) {
-        KisToolSelect::mouseMoveEvent(event);
-        return;
-    }
-
-    const QPoint position = convertToImagePixelCoordFloored(event);
-    setHoverSegment(m_segmentMap.segmentAt(position));
-    KisToolSelect::mouseMoveEvent(event);
-}
-
-void SmartSelectTool::beginPrimaryAction(KoPointerEvent *event)
-{
-    KisToolSelectBase::beginPrimaryAction(event);
-    if (isMovingSelection()) {
-        return;
-    }
-    if (!selectionEditable()) {
-        showNotEditableMessage();
-        event->ignore();
-        return;
-    }
-
-    if (m_hoverSegmentId == 0 || m_state != State::Ready) {
-        event->ignore();
-        return;
-    }
-
-    beginSelectInteraction();
-    applySegmentSelection(canvas(), currentImage(), currentNode(), m_segmentMap, m_hoverSegmentId,
-        selectionAction(), growSelection(), featherSelection(), antiAliasSelection());
-}
-
-void SmartSelectTool::endPrimaryAction(KoPointerEvent *event)
-{
-    if (isMovingSelection()) {
-        KisToolSelectBase::endPrimaryAction(event);
-        return;
-    }
-
-    Q_UNUSED(event);
-    endSelectInteraction();
-}
-
 void SmartSelectTool::paint(QPainter& painter, const KoViewConverter& converter)
 {
-    Q_UNUSED(converter);
-    if (m_hoverSegmentId == 0 || m_state != State::Ready) {
-        return;
-    }
-
-    const QRect bbox = m_segmentMap.segmentBounds(m_hoverSegmentId);
-    if (bbox.isEmpty()) {
-        return;
-    }
-
-    const QImage overlay = m_segmentMap.overlayImage(m_hoverSegmentId, QColor(255, 0, 0, 96));
-    if (overlay.isNull()) {
-        return;
-    }
-
-    painter.save();
-    painter.drawImage(pixelToView(bbox), overlay);
-    painter.restore();
+    KisToolSelectBase<SmartSelectOutlineBase>::paint(painter, converter);
 }
 
 QWidget *SmartSelectTool::createOptionWidget()
 {
-    qInfo() << "[SmartSelect] event=tool.options.create.enter";
-    KisToolSelectBase::createOptionWidget();
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.options.create"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("enter") } });
+    KisToolSelectBase<SmartSelectOutlineBase>::createOptionWidget();
     KisSelectionOptions *selectionWidget = selectionOptionWidget();
     selectionWidget->setReferenceSectionVisible(false);
 
@@ -672,7 +642,8 @@ QWidget *SmartSelectTool::createOptionWidget()
     sectionStatus->appendWidget(QStringLiteral("cancelButton"), m_cancelButton);
     selectionWidget->appendWidget(QStringLiteral("sectionSmartSelectStatus"), sectionStatus);
     updateOptionsUi();
-    qInfo() << "[SmartSelect] event=tool.options.create.exit";
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("tool.options.create"),
+        { { QStringLiteral("lifecycle.action"), QStringLiteral("exit") } });
     return selectionWidget;
 }
 
@@ -685,34 +656,19 @@ void SmartSelectTool::resetCursorStyle()
     } else if (selectionAction() == SELECTION_INTERSECT) {
         useCursor(QCursor(Qt::PointingHandCursor));
     } else {
-        KisToolSelect::resetCursorStyle();
+        KisToolSelectBase<SmartSelectOutlineBase>::resetCursorStyle();
     }
 }
 
-void SmartSelectTool::setHoverSegment(quint16 segmentId)
+bool SmartSelectTool::primaryActionSupportsHiResEvents() const
 {
-    if (m_hoverSegmentId == segmentId) {
-        return;
-    }
-
-    const quint16 old = m_hoverSegmentId;
-    m_hoverSegmentId = segmentId;
-    requestSegmentUpdate(old);
-    requestSegmentUpdate(m_hoverSegmentId);
+    return !isMovingSelection();
 }
 
-void SmartSelectTool::requestSegmentUpdate(quint16 segmentId)
+bool SmartSelectTool::alternateActionSupportsHiResEvents(KisTool::AlternateAction action) const
 {
-    if (!currentImage() || segmentId == 0) {
-        return;
-    }
-
-    QRect bbox = m_segmentMap.segmentBounds(segmentId);
-    if (bbox.isEmpty()) {
-        return;
-    }
-    bbox = bbox.adjusted(-2, -2, 2, 2).intersected(currentImage()->bounds());
-    canvas()->updateCanvas(currentImage()->pixelToDocument(bbox));
+    Q_UNUSED(action);
+    return !isMovingSelection();
 }
 
 void SmartSelectTool::showNotEditableMessage()

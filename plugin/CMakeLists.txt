@@ -9,9 +9,12 @@ set(kritasmartselect_SOURCES
     SmartSelectPlugin.cpp
     SmartSelectRuntimeConfig.cpp
     SmartSelectTool.cpp
+    LassoRegionMask.cpp
     NpyWriter.cpp
     SegmentMap.cpp
     SelectionApply.cpp
+    SelectionMask.cpp
+    SmartSelectLog.cpp
     SnapshotCapture.cpp
     SnapshotFingerprint.cpp
     SnapshotImage.cpp
@@ -43,8 +46,10 @@ if(SMART_SELECT_BUILD_TESTS)
 
     add_executable(smartselect_core_tests
         tests/SmartSelectCoreTest.cpp
+        LassoRegionMask.cpp
         NpyWriter.cpp
         SegmentMap.cpp
+        SelectionMask.cpp
         SnapshotFingerprint.cpp
         SnapshotImage.cpp
     )

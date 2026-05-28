@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 from job_runner import JobContext
+from observability import log_event
 from runtime_manifest import (
     PYTHON_PACKAGES,
     RUNTIME_PYTHON_VERSION,
@@ -76,12 +77,6 @@ class RuntimeReady:
 def _required_python_major_minor() -> tuple[int, int]:
     major, minor = RUNTIME_PYTHON_VERSION.split(".", 1)
     return int(major), int(minor)
-
-
-def _log_worker_event(event: str, **fields: object) -> None:
-    parts = [f"[SmartSelectWorker] event={event}"]
-    parts.extend(f"{key}={value}" for key, value in fields.items())
-    print(" ".join(parts), file=sys.stderr, flush=True)
 
 
 def runtime_status(root: Path) -> RuntimeStatus:
@@ -170,12 +165,15 @@ def ensure_runtime(
     ready = _validate_runtime(root)
     _write_runtime_json(root, ready)
     _activate_runtime(ready)
-    _log_worker_event(
+    log_event(
         "runtime.setup.result",
-        cache_state="ready",
-        runtime_version=RUNTIME_VERSION,
-        cuda_available=ready.cuda_available,
-        sam2_cuda_extension=ready.sam2_cuda_extension,
+        component="runtime_env",
+        **{
+            "runtime.cache.state": "ready",
+            "runtime.version": RUNTIME_VERSION,
+            "cuda.available": ready.cuda_available,
+            "runtime.sam2.cuda_extension": ready.sam2_cuda_extension,
+        },
     )
     return ready
 
@@ -198,7 +196,7 @@ def _create_venv(venv_path: Path, context: JobContext | None) -> None:
     if _python_executable_matches_runtime(python_executable):
         return
 
-    _log_worker_event("runtime.setup.start", stage="create_venv")
+    log_event("runtime.setup.start", component="runtime_env", **{"job.stage": "create_venv"})
     uv = shutil.which("uv")
     if uv is not None:
         _run_process(
@@ -212,10 +210,14 @@ def _create_venv(venv_path: Path, context: JobContext | None) -> None:
         _run_process([sys.executable, "-m", "venv", "--clear", str(venv_path)], {}, context)
         return
 
-    _log_worker_event(
+    log_event(
         "runtime.setup.failed",
-        reason="compatible_python_not_found",
-        required_python=RUNTIME_PYTHON_VERSION,
+        severity="error",
+        component="runtime_env",
+        **{
+            "error.reason": "compatible_python_not_found",
+            "runtime.python.required_version": RUNTIME_PYTHON_VERSION,
+        },
     )
     raise RuntimeBootstrapError("SAM2 runtime setup failed")
 
@@ -265,7 +267,11 @@ def _install_dependencies(
     pip_cache_dir: Path,
     context: JobContext | None,
 ) -> None:
-    _log_worker_event("runtime.setup.start", stage="install_dependencies")
+    log_event(
+        "runtime.setup.start",
+        component="runtime_env",
+        **{"job.stage": "install_dependencies"},
+    )
     base_env = {
         "PIP_CACHE_DIR": str(pip_cache_dir),
         "UV_CACHE_DIR": str(pip_cache_dir / "uv"),
@@ -274,9 +280,13 @@ def _install_dependencies(
     cuda_home = _detect_cuda_home()
     if cuda_home is not None:
         base_env.update(_cuda_build_environment(cuda_home))
-        _log_worker_event("runtime.cuda_toolkit.found", cuda_home=cuda_home)
+        log_event(
+            "runtime.cuda_toolkit.found",
+            component="runtime_env",
+            **{"cuda.home": cuda_home},
+        )
     elif SAM2_BUILD_CUDA == "1":
-        _log_worker_event("runtime.cuda_toolkit.missing")
+        log_event("runtime.cuda_toolkit.missing", severity="warning", component="runtime_env")
 
     _run_process(
         _install_command(
@@ -443,7 +453,11 @@ def _run_process(
         for raw_line in process.stdout:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if line:
-                _log_worker_event("runtime.setup.progress", line=line)
+                log_event(
+                    "runtime.setup.progress",
+                    component="runtime_env",
+                    **{"process.output.line": line},
+                )
             if context is not None and context.is_cancelled():
                 process.terminate()
                 raise RuntimeBootstrapError("runtime setup cancelled")
@@ -473,17 +487,22 @@ def _validate_runtime(root: Path) -> RuntimeReady:
         importlib.import_module("sam2.automatic_mask_generator")
         sam2_cuda_extension = _sam2_cuda_extension_available()
     except Exception as exc:
-        _log_worker_event(
+        log_event(
             "runtime.validation.failed",
-            error_type=type(exc).__name__,
-            reason=str(exc),
+            severity="error",
+            component="runtime_env",
+            **{"error.type": type(exc).__name__, "error.reason": str(exc)},
         )
         raise RuntimeDependencyError("SAM2 dependencies are not available") from exc
     if SAM2_REQUIRE_CUDA_EXTENSION and not sam2_cuda_extension:
-        _log_worker_event(
+        log_event(
             "runtime.validation.failed",
-            error_type="Sam2CudaExtensionMissing",
-            reason="sam2._C import failed",
+            severity="error",
+            component="runtime_env",
+            **{
+                "error.type": "Sam2CudaExtensionMissing",
+                "error.reason": "sam2._C import failed",
+            },
         )
         raise RuntimeDependencyError("SAM2 dependencies are not available") from None
 
@@ -506,10 +525,11 @@ def _sam2_cuda_extension_available() -> bool:
     try:
         importlib.import_module("sam2._C")
     except Exception as exc:
-        _log_worker_event(
+        log_event(
             "runtime.validation.sam2_cuda_extension_failed",
-            error_type=type(exc).__name__,
-            reason=str(exc),
+            severity="warning",
+            component="runtime_env",
+            **{"error.type": type(exc).__name__, "error.reason": str(exc)},
         )
         return False
     return True

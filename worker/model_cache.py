@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from http.client import HTTPMessage
@@ -13,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from model_registry import ModelSpec
+from observability import log_event
 
 CacheState = Literal["missing", "partial", "verified", "invalid"]
 
@@ -72,12 +72,6 @@ CancelCallback = Callable[[], bool]
 
 def _default_urlopen(request: Request, *, timeout: float) -> ResponseContextLike:
     return cast(ResponseContextLike, urlopen(request, timeout=timeout))
-
-
-def _log_worker_event(event: str, **fields: object) -> None:
-    parts = [f"[SmartSelectWorker] event={event}"]
-    parts.extend(f"{key}={value}" for key, value in fields.items())
-    print(" ".join(parts), file=sys.stderr, flush=True)
 
 
 def _exception_reason(exc: BaseException) -> str:
@@ -213,7 +207,11 @@ class ModelCache:
             start_offset = 0
         self._ensure_disk_space(partial_path.parent, spec.id, spec.expected_bytes - start_offset)
 
-        _log_worker_event("model.download.start", model_id=spec.id, bytes_done=start_offset)
+        log_event(
+            "model.download.start",
+            component="model_cache",
+            **{"model.id": spec.id, "download.bytes_done": start_offset},
+        )
         try:
             try:
                 downloaded = self._download_once(
@@ -227,37 +225,52 @@ class ModelCache:
         except ModelDownloadCancelled:
             raise
         except ModelDownloadError as exc:
-            _log_worker_event(
+            log_event(
                 "model.download.failed",
-                model_id=spec.id,
-                error_type=exc.__class__.__name__,
-                reason=_exception_reason(exc),
+                severity="error",
+                component="model_cache",
+                **{
+                    "model.id": spec.id,
+                    "error.type": exc.__class__.__name__,
+                    "error.reason": _exception_reason(exc),
+                },
             )
             raise
         except (HTTPError, TimeoutError, URLError, OSError) as exc:
-            _log_worker_event(
+            log_event(
                 "model.download.failed",
-                model_id=spec.id,
-                error_type=exc.__class__.__name__,
-                reason=_exception_reason(exc),
+                severity="error",
+                component="model_cache",
+                **{
+                    "model.id": spec.id,
+                    "error.type": exc.__class__.__name__,
+                    "error.reason": _exception_reason(exc),
+                },
             )
             raise ModelDownloadError("model download failed") from exc
 
         if downloaded != spec.expected_bytes:
-            _log_worker_event(
+            log_event(
                 "model.download.failed",
-                model_id=spec.id,
-                error_type="ModelVerificationError",
-                bytes_done=downloaded,
+                severity="error",
+                component="model_cache",
+                **{
+                    "model.id": spec.id,
+                    "error.type": "ModelVerificationError",
+                    "download.bytes_done": downloaded,
+                },
             )
             raise ModelVerificationError("model verification failed")
 
         partial_path.replace(checkpoint_path)
-        _log_worker_event(
+        log_event(
             "model.download.result",
-            model_id=spec.id,
-            cache_state="verified",
-            checkpoint_bytes=downloaded,
+            component="model_cache",
+            **{
+                "model.id": spec.id,
+                "model.cache.state": "verified",
+                "model.checkpoint.bytes": downloaded,
+            },
         )
 
     def _download_once(
@@ -291,11 +304,14 @@ class ModelCache:
                         "bytes_total": spec.expected_bytes,
                     },
                 )
-                _log_worker_event(
+                log_event(
                     "model.download.progress",
-                    model_id=spec.id,
-                    bytes_done=downloaded,
-                    bytes_total=spec.expected_bytes,
+                    component="model_cache",
+                    **{
+                        "model.id": spec.id,
+                        "download.bytes_done": downloaded,
+                        "download.bytes_total": spec.expected_bytes,
+                    },
                 )
         return downloaded
 
@@ -331,14 +347,18 @@ class ModelCache:
                 last_error = exc
                 if attempt == DOWNLOAD_RETRY_ATTEMPTS:
                     break
-                _log_worker_event(
+                log_event(
                     "model.download.retry",
-                    model_id=spec.id,
-                    attempt=attempt,
-                    error_type=exc.__class__.__name__,
-                    reason=_exception_reason(exc),
-                    range_start=range_start,
-                    range_end=range_end,
+                    severity="warning",
+                    component="model_cache",
+                    **{
+                        "model.id": spec.id,
+                        "retry.attempt": attempt,
+                        "error.type": exc.__class__.__name__,
+                        "error.reason": _exception_reason(exc),
+                        "download.range_start": range_start,
+                        "download.range_end": range_end,
+                    },
                 )
 
         raise ModelDownloadError("model download failed") from last_error
@@ -346,13 +366,17 @@ class ModelCache:
     def _ensure_disk_space(self, directory: Path, model_id: str, required_bytes: int) -> None:
         free_bytes = shutil.disk_usage(directory).free
         if free_bytes < required_bytes:
-            _log_worker_event(
+            log_event(
                 "model.download.failed",
-                model_id=model_id,
-                error_type="InsufficientDiskSpace",
-                reason="insufficient disk space",
-                bytes_required=required_bytes,
-                bytes_free=free_bytes,
+                severity="error",
+                component="model_cache",
+                **{
+                    "model.id": model_id,
+                    "error.type": "InsufficientDiskSpace",
+                    "error.reason": "insufficient disk space",
+                    "disk.bytes_required": required_bytes,
+                    "disk.bytes_free": free_bytes,
+                },
             )
             raise ModelDownloadError("model download failed")
 

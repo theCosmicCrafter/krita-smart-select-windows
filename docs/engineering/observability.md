@@ -37,13 +37,26 @@
 Нужно использовать структурированные записи событий, чтобы их можно было
 фильтровать:
 
-- `setup.start`
-- `setup.failed`
+```text
+[SmartSelect] event.name=selection.start event.domain=smart_select severity=info component=krita_plugin job.id=12 job.type=lasso_selection model.id=sam2.1_hiera_large
+[SmartSelectWorker] event.name=sam.predict.result event.domain=smart_select severity=info component=sam2 job.id=12 model.id=sam2.1_hiera_large device.type=cuda duration_ms=531 masks.count=3
+```
+
+Stable event names:
+
+- `setup.tool_factory.register`
+- `setup.tool_action.inject`
+- `setup.native_runtime`
+- `tool.activate`
+- `tool.deactivate`
+- `tool.destroy`
+- `tool.image.updated`
 - `runtime.cache.path`
 - `runtime.cache.failed`
 - `runtime.setup.start`
 - `runtime.setup.progress`
 - `runtime.setup.failed`
+- `runtime.setup.result`
 - `model.download.start`
 - `model.download.failed`
 - `model.download.progress`
@@ -53,29 +66,87 @@
 - `model.cache.failed`
 - `worker.environment.sanitized`
 - `worker.start`
+- `worker.start.failed`
+- `worker.stderr`
 - `worker.crashed`
-- `inference.start`
-- `inference.progress`
-- `inference.cancelled`
-- `inference.failed`
-- `inference.result`
+- `lasso.finish`
+- `lasso.region_mask.created`
+- `lasso.region_mask.failed`
+- `snapshot.capture.start`
+- `snapshot.capture.failed`
+- `snapshot.files.failed`
+- `selection.start`
+- `selection.progress`
+- `selection.cancelled`
+- `selection.failed`
+- `selection.result`
+- `selection.result.ignored_stale`
+- `selection.error.ignored_stale`
+- `selection.apply.failed`
 - `sam.generate.start`
 - `sam.generate.result`
+- `sam.predict.start`
+- `sam.predict.result`
 - `segment_map.result`
 - `selection_mask.result`
+- `selection_mask.fallback`
 - `region_input.result`
-- `selection.apply.failed`
+- `temp_file.cleaned`
+- `temp_file.cleanup_failed`
+- `temp_file.kept_for_debug`
+- `temp_dir.cleaned`
 
 Stable event names важнее красивого текста. User-facing message может быть
 отдельным полем.
+
+## OpenTelemetry Compatibility
+
+MVP logs are OpenTelemetry-compatible by schema, but the plugin does not use an
+OpenTelemetry SDK, OTLP exporter or network telemetry.
+
+Required common fields:
+
+- `event.name`
+- `event.domain=smart_select`
+- `severity`
+- `component`
+
+Preferred dotted fields:
+
+- `job.id`
+- `job.type`
+- `job.stage`
+- `model.id`
+- `model.cache.state`
+- `model.checkpoint.bytes`
+- `runtime.version`
+- `runtime.cache.state`
+- `device.type`
+- `cuda.available`
+- `duration_ms`
+- `masks.count`
+- `region.bbox`
+- `region.area`
+- `selection.area`
+- `selection.bbox`
+- `error.type`
+- `error.message`
+- `error.reason`
+
+The current transport remains human-readable key-value text through `qInfo`,
+`qWarning` and worker `stderr`. Persistent JSON Lines logs and OTLP export are
+future work. OTLP export must be explicit opt-in and must not be added without
+a product decision.
+
+New logs must use `event.name=...`, not `event=...`.
 
 Worker-side failure events must include enough non-sensitive detail to debug
 the root cause without reproducing immediately. In particular,
 `model.download.failed` must include:
 
-- `model_id`;
-- stable `error_type`;
-- short `reason` / exception representation.
+- `model.id`;
+- stable `error.type`;
+- short `error.reason` / exception representation.
 
 `model.download.retry` should include the same failure shape plus the retry
 attempt and requested byte range. This keeps transient network failures visible

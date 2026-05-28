@@ -13,12 +13,12 @@ Krita Smart Select - плагин для Krita, который помогает 
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files.
-- Current implementation: native canvas flow, flattened snapshot export,
-  alpha mask handling, in-memory cache reuse, SAM2.1 Large
-  registry/download/cache verification, automatic runtime bootstrap and real
-  SAM2.1 Large inference in the worker.
-- Current product direction: move the MVP quality path from full-image prepared
-  hover segmentation to region-prompted lasso/box segmentation.
+- Current implementation: native canvas flow, lasso input, flattened snapshot
+  export, alpha mask handling, SAM2.1 Large registry/download/cache
+  verification, automatic runtime bootstrap and real SAM2.1 Large prompted
+  selection in the worker.
+- Current product direction: lasso/region-prompted selection is the primary MVP
+  path; full-image prepared hover segmentation is legacy/dev compatibility.
 - Not implemented yet: model picker, lighter presets, persistent logs and
   support dialog.
 

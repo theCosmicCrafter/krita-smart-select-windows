@@ -78,7 +78,7 @@ Krita:
   `installing_runtime_dependencies`, `validating_runtime`, `resolving_model`,
   `checking_model_cache`, `downloading_model`, `verifying_model`,
   `reading_image`, `preprocessing_image`, `loading_model`, `running_sam`,
-  `building_segment_map`, `building_hover_index`.
+  `building_selection_mask`.
 - Progress должен появляться быстро, даже если сначала он indeterminate.
 - Должна быть кнопка Cancel.
 - Если пользователь сменил tool, документ или закрыл изображение, job должен
@@ -114,26 +114,23 @@ MVP таргетирует конкретную версию Krita, а не ши
 Уже реализовано:
 
 - native Smart Select tool registration;
-- legacy full-image canvas hover overlay для prepared segment map;
-- legacy click-to-selection для full-image spike;
+- lasso/freehand Smart Select input;
+- lasso/region-prompted SAM2 selection apply;
 - Python loader wrapper;
-- worker-backed mock segmentation через `QProcess`;
+- worker-backed lasso selection через `QProcess`;
 - flattened snapshot export as RGB PNG plus alpha mask;
 - downscaled `128x128` snapshot fingerprint;
-- exact in-memory cache reuse by size/model/algorithm/fingerprint;
-- debounced rebuild on active image updates;
 - Tool Options status/progress/cancel block;
 - ModelRegistry для `sam2.1_hiera_large`;
 - worker-side checkpoint download/cache/verify;
 - worker-managed system Python venv/cache для SAM2 runtime;
-- real SAM2.1 Large automatic mask generation;
-- conversion from SAM masks to full-canvas `uint16` segment map;
+- real SAM2.1 Large prompted selection;
+- conversion from SAM masks to full-canvas `uint8` selection mask;
 - runtime diagnostics foundation;
 - type checking and code tests.
 
 Ещё не реализовано:
 
-- lasso/region-prompted MVP flow;
 - model picker and lighter model presets;
 - candidate mask debug export;
 - persistent logs and support dialog.

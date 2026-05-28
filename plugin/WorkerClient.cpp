@@ -1,6 +1,7 @@
 #include "WorkerClient.h"
 
-#include <QDebug>
+#include "SmartSelectLog.h"
+
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -58,11 +59,11 @@ bool WorkerClient::start(const QString& pythonExecutable, const QString& workerS
     m_stdoutBuffer.clear();
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
     m_process.setProcessEnvironment(sanitizedWorkerEnvironment());
-    qInfo() << "[SmartSelect] event=worker.environment.sanitized"
-            << "removedKeys"
-            << QStringList { QStringLiteral("PYTHONHOME"), QStringLiteral("PYTHONPATH"),
-                   QStringLiteral("PYTHONUSERBASE"), QStringLiteral("LD_LIBRARY_PATH") }
-            << "pythonNoUserSite" << true;
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("worker.environment.sanitized"),
+        { { QStringLiteral("environment.removed_keys"),
+              QStringList { QStringLiteral("PYTHONHOME"), QStringLiteral("PYTHONPATH"),
+                  QStringLiteral("PYTHONUSERBASE"), QStringLiteral("LD_LIBRARY_PATH") } },
+            { QStringLiteral("python.no_user_site"), true } });
     m_process.start(pythonExecutable, QStringList { workerScript });
     if (!m_process.waitForStarted(1000)) {
         Q_EMIT crashed(m_process.errorString());
@@ -87,6 +88,13 @@ int WorkerClient::prepareSegments(const PrepareSegmentsRequest& prepareRequest)
 {
     const int id = m_nextId++;
     send(prepareSegmentsRequestJson(id, prepareRequest));
+    return id;
+}
+
+int WorkerClient::prepareSelection(const PrepareSelectionRequest& prepareRequest)
+{
+    const int id = m_nextId++;
+    send(prepareSelectionRequestJson(id, prepareRequest));
     return id;
 }
 
@@ -170,13 +178,31 @@ void WorkerClient::handleMessage(const QJsonObject& message)
     if (message.contains("result")) {
         const QJsonObject resultObject = message.value("result").toObject();
         if (resultObject.contains(QStringLiteral("model"))) {
-            qInfo() << "[SmartSelect] event=inference.result.model"
-                    << "jobId" << id << "model" << resultObject.value(QStringLiteral("model"));
+            logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("inference.result.model"),
+                { { QStringLiteral("job.id"), id },
+                    { QStringLiteral("model.payload"),
+                        QString::fromUtf8(
+                            QJsonDocument(resultObject.value(QStringLiteral("model")).toObject())
+                                .toJson(QJsonDocument::Compact)) } });
         }
         if (resultObject.contains(QStringLiteral("runtime"))) {
-            qInfo() << "[SmartSelect] event=inference.result.runtime"
-                    << "jobId" << id << "runtime" << resultObject.value(QStringLiteral("runtime"));
+            logSmartSelectEvent(SmartSelectLogLevel::Info,
+                QStringLiteral("inference.result.runtime"),
+                { { QStringLiteral("job.id"), id },
+                    { QStringLiteral("runtime.payload"),
+                        QString::fromUtf8(
+                            QJsonDocument(resultObject.value(QStringLiteral("runtime")).toObject())
+                                .toJson(QJsonDocument::Compact)) } });
         }
+        const QString selectionMaskPath
+            = resultObject.value(QStringLiteral("selection_mask_path")).toString();
+        if (!selectionMaskPath.isEmpty()) {
+            Q_EMIT selectionResult(id, selectionMaskPath,
+                resultObject.value("segments_path").toString(),
+                resultObject.value("metadata").toArray());
+            return;
+        }
+
         Q_EMIT result(id, resultObject.value("segment_map_path").toString(),
             resultObject.value("segments_path").toString(),
             resultObject.value("metadata").toArray());
