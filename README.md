@@ -51,33 +51,36 @@ inside the plugin source tree. Runtime data is stored under Krita user data:
 
 ## User Installation
 
-Build or download a release archive with this layout:
+Download the Linux release ZIP:
 
 ```text
-krita-smart-select/
-  pykrita/
-    smart_select.desktop
-    smart_select/
-      lib/kritasmartselect.so
-      ...
-  share/krita/actions/SmartSelectTool.action
+krita-smart-select-linux-x64-<version>.zip
 ```
 
-Install into the current user Krita profile:
+Install it from Krita:
 
-```bash
-mkdir -p ~/.local/share/krita/pykrita ~/.local/share/krita/actions
-rm -rf ~/.local/share/krita/pykrita/smart_select
-cp -a pykrita/smart_select ~/.local/share/krita/pykrita/
-cp pykrita/smart_select.desktop ~/.local/share/krita/pykrita/
-cp share/krita/actions/SmartSelectTool.action ~/.local/share/krita/actions/
+1. Open `Tools` -> `Scripts` -> `Import Python Plugin from File...`.
+2. Select the release ZIP.
+3. Restart Krita.
+4. Enable `Smart Select` in the Python Plugin Manager if needed.
+5. Select `Smart Select` from the toolbox.
+
+The ZIP root contains the Python plugin descriptor and package:
+
+```text
+smart_select.desktop
+smart_select/
+  SmartSelectTool.action
+  lib/kritasmartselect.so
+  worker/
+  ...
 ```
-
-Restart Krita, enable the plugin if needed, then select `Smart Select` from the
-toolbox.
 
 On first use, draw or edit a region, press `Select object with AI`, and let the
 worker create the runtime and download the model.
+
+The release also includes a `.tar.gz` archive with the expanded install layout
+for manual inspection or manual profile installation.
 
 ## Development Setup
 
@@ -116,8 +119,27 @@ cp dist/krita-smart-select/share/krita/actions/SmartSelectTool.action ~/.local/s
 Package a Linux archive:
 
 ```bash
-./scripts/package-linux.sh
+./scripts/package-linux.sh 0.1.0
 ```
+
+This writes two files into `dist/`:
+
+```text
+krita-smart-select-linux-x64-0.1.0.zip
+krita-smart-select-linux-x64-0.1.0.tar.gz
+```
+
+Publish those archives to GitHub Releases:
+
+```bash
+./scripts/create-github-release.sh 0.1.0
+```
+
+The release helper expects a clean worktree, creates and pushes tag `v0.1.0`,
+then creates or updates the matching GitHub Release with both assets attached.
+This is a local release flow because the package contains a native
+`kritasmartselect.so` built against Krita 5.3.1. A fully hosted GitHub Actions
+release would need a matching Krita build environment or a self-hosted runner.
 
 ## Verification
 
