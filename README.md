@@ -152,6 +152,22 @@ SMART_SELECT_RUN_BIREFNET_SMOKE=1 PYTHON=.venv/bin/python ./scripts/test-birefne
 - [Licensing](docs/licensing.md)
 - [Contributing](CONTRIBUTING.md)
 
+## Acknowledgements
+
+Krita Smart Select builds on ideas, APIs and open-source work from:
+
+- [Krita](https://krita.org/) and the KDE Krita project, whose native tool,
+  selection and plugin APIs make this kind of canvas-integrated workflow
+  possible.
+- [BiRefNet](https://github.com/ZhengPeng7/BiRefNet), especially the
+  `ZhengPeng7/BiRefNet_HR-matting` model used for direct soft-alpha
+  extraction.
+- [Krita Vision Tools](https://github.com/Acly/krita-ai-tools), which provided
+  a useful reference for ML-assisted Krita tooling and user-facing selection
+  workflows.
+- [CorridorKey](https://github.com/nikopueringer/CorridorKey), which helped
+  inform the product direction toward alpha-first, plug-and-play matting.
+
 ## License
 
 Krita Smart Select is licensed under GPL-3.0-only. See [LICENSE](LICENSE)
