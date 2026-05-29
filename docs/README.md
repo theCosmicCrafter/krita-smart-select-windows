@@ -2,8 +2,9 @@
 
 Krita Smart Select - плагин для Krita, который помогает создавать выделения с
 помощью AI. Основной сценарий MVP: пользователь активирует Smart Select,
-обводит объект лассо, worker запускает BiRefNet HR Matting на crop вокруг
-области и возвращает soft alpha selection mask.
+обводит или правит область обычным лассо, нажимает `Select object with AI`,
+worker запускает BiRefNet HR Matting на crop вокруг текущей области и
+возвращает soft alpha selection mask.
 
 ## Статус MVP
 
@@ -13,9 +14,10 @@ Krita Smart Select - плагин для Krita, который помогает 
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files.
-- Current implementation: native canvas flow, lasso input, flattened snapshot
-  export, document alpha mask, lasso region mask, managed BiRefNet runtime,
-  pinned Hugging Face model cache and soft alpha selection apply.
+- Current implementation: native canvas flow, lasso selection editing,
+  explicit `Select object with AI` action, flattened snapshot export, document
+  alpha mask, current selection region mask, managed BiRefNet runtime, pinned
+  Hugging Face model cache and soft alpha selection apply.
 - Current product direction: plug-and-play lasso alpha extraction. SAM2/MAM,
   trimap tuning, prepared hover segmentation and click-to-select are out of the
   current MVP path.

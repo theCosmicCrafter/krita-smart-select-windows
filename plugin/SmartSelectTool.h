@@ -13,6 +13,7 @@ class QJsonArray;
 class QProgressBar;
 class QPushButton;
 class WorkerClient;
+struct LassoRegionMask;
 
 class SmartSelectOutlineBase : public KisToolOutlineBase
 {
@@ -84,7 +85,11 @@ private:
     void endShape() override;
 
     bool startWorkerIfNeeded();
-    void startSelectionJob(const QVector<QPointF>& points);
+    void applyLassoToSelection(const QVector<QPointF>& points);
+    void startSelectionJobFromCurrentSelection();
+    void startSelectionJob(const LassoRegionMask& regionMask);
+    bool buildCurrentSelectionRegionMask(LassoRegionMask *mask, QString *errorMessage);
+    bool hasCurrentSelectionRegion();
     void cancelActiveJob();
     void setState(State state, const QString& message = QString());
     void updateOptionsUi();
@@ -94,8 +99,8 @@ private:
     QString friendlyStageText(const QString& stage) const;
 
     void onWorkerProgress(int id, const QString& stage, double progress, bool hasProgress);
-    void onWorkerSelectionResult(int id, const QString& selectionMaskPath,
-        const QJsonArray& metadata);
+    void onWorkerSelectionResult(
+        int id, const QString& selectionMaskPath, const QJsonArray& metadata);
     void onWorkerError(int id, const QString& type, const QString& message);
     void onWorkerStderr(const QString& line);
     void onWorkerCrashed(const QString& message);
@@ -112,6 +117,7 @@ private:
     QString m_errorMessage;
     QPointer<QLabel> m_statusLabel;
     QPointer<QProgressBar> m_progressBar;
+    QPointer<QPushButton> m_runButton;
     QPointer<QPushButton> m_cancelButton;
     QStringList m_pendingCleanupPaths;
     QStringList m_activeJobCleanupPaths;

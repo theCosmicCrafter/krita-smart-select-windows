@@ -17,17 +17,27 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QPainter>
+#include <QPainterPath>
 #include <QProgressBar>
 #include <QPushButton>
 
+#include <KisCursorOverrideLock.h>
 #include <KisOptionCollectionWidget.h>
 #include <KisViewManager.h>
+#include <KoColor.h>
 #include <KoPointerEvent.h>
 #include <canvas/kis_canvas2.h>
 #include <kis_algebra_2d.h>
+#include <kis_command_utils.h>
 #include <kis_cursor.h>
+#include <kis_default_bounds.h>
 #include <kis_floating_message.h>
 #include <kis_image.h>
+#include <kis_painter.h>
+#include <kis_pixel_selection.h>
+#include <kis_processing_applicator.h>
+#include <kis_selection.h>
+#include <kis_selection_filters.h>
 #include <kis_selection_tool_config_widget_helper.h>
 #include <kis_selection_tool_helper.h>
 #include <klocalizedstring.h>
@@ -251,7 +261,7 @@ void SmartSelectTool::finishOutline(const QVector<QPointF>& points)
         return;
     }
 
-    startSelectionJob(points);
+    applyLassoToSelection(points);
 }
 
 void SmartSelectTool::beginShape()
@@ -264,7 +274,87 @@ void SmartSelectTool::endShape()
     endSelectInteraction();
 }
 
-void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
+void SmartSelectTool::applyLassoToSelection(const QVector<QPointF>& points)
+{
+    KisCanvas2 *kisCanvas = dynamic_cast<KisCanvas2 *>(canvas());
+    if (!kisCanvas || !currentImage()) {
+        setState(State::Error, i18n("no active image"));
+        return;
+    }
+
+    KisCursorOverrideLock cursorLock(KisCursor::waitCursor());
+    KisProcessingApplicator applicator(currentImage(), currentNode(), KisProcessingApplicator::NONE,
+        KisImageSignalVector(), kundo2_i18n("Smart Select"));
+
+    KisPixelSelectionSP selection = new KisPixelSelection(new KisDefaultBounds(currentImage()));
+
+    const bool antiAlias = antiAliasSelection();
+    const int grow = growSelection();
+    const int feather = featherSelection();
+
+    QPainterPath path;
+    path.addPolygon(points);
+    path.closeSubpath();
+
+    KUndo2Command *cmd = new KisCommandUtils::LambdaCommand([selection, antiAlias, grow, feather,
+                                                                path]() mutable -> KUndo2Command * {
+        KisPainter painter(selection);
+        painter.setPaintColor(KoColor(Qt::black, selection->colorSpace()));
+        painter.setAntiAliasPolygonFill(antiAlias && feather == 0);
+        painter.setFillStyle(KisPainter::FillStyleForegroundColor);
+        painter.setStrokeStyle(KisPainter::StrokeStyleNone);
+        painter.paintPainterPath(path);
+
+        if (grow > 0) {
+            KisGrowSelectionFilter filter(grow, grow);
+            filter.process(selection, selection->selectedRect().adjusted(-grow, -grow, grow, grow));
+        } else if (grow < 0) {
+            KisShrinkSelectionFilter filter(-grow, -grow, false);
+            filter.process(selection, selection->selectedRect());
+        }
+        if (feather > 0) {
+            KisFeatherSelectionFilter filter(feather);
+            filter.process(selection,
+                selection->selectedRect().adjusted(-feather, -feather, feather, feather));
+        }
+
+        if (grow == 0 && feather == 0) {
+            selection->setOutlineCache(path);
+        } else {
+            selection->invalidateOutlineCache();
+        }
+        return nullptr;
+    });
+
+    applicator.applyCommand(cmd, KisStrokeJobData::SEQUENTIAL);
+    KisSelectionToolHelper helper(kisCanvas, kundo2_i18n("Smart Select"));
+    helper.selectPixelSelection(applicator, selection, selectionAction());
+    applicator.end();
+
+    logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("lasso.region.applied"),
+        { { QStringLiteral("lasso.points.count"), points.size() },
+            { QStringLiteral("selection.action"), int(selectionAction()) } });
+    setState(State::Idle);
+}
+
+void SmartSelectTool::startSelectionJobFromCurrentSelection()
+{
+    if (!selectionEditable()) {
+        showNotEditableMessage();
+        return;
+    }
+
+    LassoRegionMask regionMask;
+    QString error;
+    if (!buildCurrentSelectionRegionMask(&regionMask, &error)) {
+        setState(State::Error, error);
+        return;
+    }
+
+    startSelectionJob(regionMask);
+}
+
+void SmartSelectTool::startSelectionJob(const LassoRegionMask& regionMask)
 {
     cancelActiveJob();
 
@@ -273,16 +363,7 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
         return;
     }
 
-    LassoRegionMask regionMask;
     QString error;
-    if (!buildLassoRegionMask(points, currentImage()->bounds().size(), &regionMask, &error)) {
-        logSmartSelectEvent(SmartSelectLogLevel::Warning,
-            QStringLiteral("lasso.region_mask.failed"),
-            { { QStringLiteral("error.reason"), error } });
-        setState(State::Error, error);
-        return;
-    }
-
     logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("lasso.region_mask.created"),
         { { QStringLiteral("region.bbox"), regionMask.bbox },
             { QStringLiteral("region.area"), regionMask.area } });
@@ -381,6 +462,95 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
             { QStringLiteral("region.bbox"), request.regionBbox } });
 }
 
+bool SmartSelectTool::buildCurrentSelectionRegionMask(LassoRegionMask *mask, QString *errorMessage)
+{
+    if (!mask) {
+        return false;
+    }
+    *mask = LassoRegionMask();
+
+    KisCanvas2 *kisCanvas = dynamic_cast<KisCanvas2 *>(canvas());
+    if (!kisCanvas || !kisCanvas->viewManager() || !currentImage()) {
+        if (errorMessage) {
+            *errorMessage = i18n("no active image");
+        }
+        return false;
+    }
+
+    KisSelectionSP selection = kisCanvas->viewManager()->selection();
+    if (!selection) {
+        if (errorMessage) {
+            *errorMessage = i18n("draw a selection first");
+        }
+        return false;
+    }
+
+    selection->updateProjection();
+    const QRect imageBounds = currentImage()->bounds();
+    const QSize canvasSize = imageBounds.size();
+    const QRect selectedRect = selection->selectedExactRect() & imageBounds;
+    if (selectedRect.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = i18n("draw a selection first");
+        }
+        return false;
+    }
+
+    QByteArray selectedBytes;
+    selectedBytes.resize(selectedRect.width() * selectedRect.height());
+    selection->projection()->readBytes(
+        reinterpret_cast<quint8 *>(selectedBytes.data()), selectedRect);
+
+    QByteArray bytes;
+    bytes.resize(canvasSize.width() * canvasSize.height());
+    bytes.fill(0);
+
+    QRect localBbox;
+    bool seen = false;
+    int area = 0;
+    for (int y = 0; y < selectedRect.height(); ++y) {
+        for (int x = 0; x < selectedRect.width(); ++x) {
+            const int sourceIndex = y * selectedRect.width() + x;
+            const quint8 value = quint8(selectedBytes[sourceIndex]);
+            if (value == 0) {
+                continue;
+            }
+
+            const int canvasX = selectedRect.x() + x - imageBounds.x();
+            const int canvasY = selectedRect.y() + y - imageBounds.y();
+            if (canvasX < 0 || canvasY < 0 || canvasX >= canvasSize.width()
+                || canvasY >= canvasSize.height()) {
+                continue;
+            }
+            bytes[canvasY * canvasSize.width() + canvasX] = char(value);
+            const QRect pixelRect(QPoint(canvasX, canvasY), QSize(1, 1));
+            localBbox = seen ? localBbox.united(pixelRect) : pixelRect;
+            seen = true;
+            ++area;
+        }
+    }
+
+    if (localBbox.isEmpty() || area <= 0) {
+        if (errorMessage) {
+            *errorMessage = i18n("draw a selection first");
+        }
+        return false;
+    }
+
+    mask->canvasSize = canvasSize;
+    mask->bbox = localBbox;
+    mask->area = area;
+    mask->bytes = bytes;
+    return true;
+}
+
+bool SmartSelectTool::hasCurrentSelectionRegion()
+{
+    LassoRegionMask mask;
+    QString error;
+    return buildCurrentSelectionRegionMask(&mask, &error);
+}
+
 void SmartSelectTool::cancelActiveJob()
 {
     if (m_worker && m_activeJobId != 0) {
@@ -421,20 +591,19 @@ void SmartSelectTool::updateOptionsUi()
         QString text;
         switch (m_state) {
         case State::Idle:
-            text = i18n("Smart Select");
+            text = i18n("Select the area around the object, then press the button below.");
             break;
         case State::Preparing:
-            text = m_stageText.isEmpty() ? i18n("Preparing selection...")
-                                         : friendlyStageText(m_stageText);
+            text = i18n("Select the area around the object, then press the button below.");
             break;
         case State::Ready:
-            text = i18n("Smart Select: selection applied");
+            text = i18n("Select the area around the object, then press the button below.");
             break;
         case State::Error:
             text = i18n("Smart Select error: %1", m_errorMessage);
             break;
         case State::Cancelled:
-            text = i18n("Smart Select cancelled");
+            text = i18n("Select the area around the object, then press the button below.");
             break;
         }
         m_statusLabel->setText(text);
@@ -455,6 +624,12 @@ void SmartSelectTool::updateOptionsUi()
 
     if (m_cancelButton) {
         m_cancelButton->setVisible(m_state == State::Preparing);
+    }
+
+    if (m_runButton) {
+        const bool canRun = m_state != State::Preparing && hasCurrentSelectionRegion();
+        m_runButton->setVisible(m_state != State::Preparing);
+        m_runButton->setEnabled(canRun);
     }
 }
 
@@ -572,8 +747,8 @@ void SmartSelectTool::onWorkerProgress(
     updateOptionsUi();
 }
 
-void SmartSelectTool::onWorkerSelectionResult(int id, const QString& selectionMaskPath,
-    const QJsonArray& metadata)
+void SmartSelectTool::onWorkerSelectionResult(
+    int id, const QString& selectionMaskPath, const QJsonArray& metadata)
 {
     const QStringList resultCleanupPaths { selectionMaskPath };
     const bool staleImage = !currentImage()
@@ -679,10 +854,14 @@ QWidget *SmartSelectTool::createOptionWidget()
 
     m_statusLabel = new QLabel;
     m_progressBar = new QProgressBar;
+    m_runButton = new QPushButton(i18n("Select object with AI"));
+    connect(m_runButton, &QPushButton::clicked, this,
+        &SmartSelectTool::startSelectionJobFromCurrentSelection);
     m_cancelButton = new QPushButton(i18n("Cancel"));
     connect(m_cancelButton, &QPushButton::clicked, this, &SmartSelectTool::cancelActiveJob);
 
     sectionStatus->appendWidget(QStringLiteral("statusLabel"), m_statusLabel);
+    sectionStatus->appendWidget(QStringLiteral("runButton"), m_runButton);
     sectionStatus->appendWidget(QStringLiteral("progressBar"), m_progressBar);
     sectionStatus->appendWidget(QStringLiteral("cancelButton"), m_cancelButton);
     selectionWidget->appendWidget(QStringLiteral("sectionSmartSelectStatus"), sectionStatus);

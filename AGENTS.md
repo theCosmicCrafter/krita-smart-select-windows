@@ -20,7 +20,8 @@
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files, not JSON.
-- Current primary flow: lasso-driven alpha selection.
+- Current primary flow: lasso-driven alpha selection with explicit `Select
+  object with AI` action.
 - Current model: `birefnet_hr_matting` (`ZhengPeng7/BiRefNet_HR-matting`).
 - Current algorithm version: `birefnet-hr-matting-lasso-v1`.
 - BiRefNet is used as a direct alpha extraction model, not as a SAM prior or
@@ -31,7 +32,10 @@
 - Lasso selection mask contract: NumPy `.npy`, dtype `|u1`, shape
   `[height, width]`, values `0..255` are soft selection alpha and must not be
   binarized in C++.
-- Worker clips model output to `lasso_region & document_alpha`.
+- Worker clips model output to `selection_region & document_alpha`.
+- Lasso completion edits the native Krita selection first; BiRefNet inference
+  starts only when the user presses `Select object with AI`, using the current
+  selection as the region mask.
 - Runtime venv/cache is managed automatically under Krita user data, not inside
   plugin source.
 - The worker keeps disk caches, but unloads the CUDA BiRefNet model and clears

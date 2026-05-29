@@ -15,7 +15,7 @@ C++ writes:
 
 - flattened RGB snapshot PNG;
 - document alpha mask `.npy`, dtype `|u1`;
-- lasso region mask `.npy`, dtype `|u1`.
+- current selection region mask `.npy`, dtype `|u1`.
 
 Worker writes:
 
@@ -38,8 +38,9 @@ Parameters:
 - `image_path`: RGB snapshot input.
 - `alpha_mask_path`: document alpha mask. `0` means not selectable; `1..255`
   means visible/selectable.
-- `region_mask_path`: lasso mask. `0` means outside lasso; `1..255` means
-  inside lasso.
+- `region_mask_path`: current selection region mask. `0` means outside the
+  selected region; `1..255` means selected and may preserve soft selection
+  values from native Krita selection editing.
 - `region_bbox`: `[x, y, width, height]` in canvas pixel coordinates.
 - `model_id`: currently `birefnet_hr_matting`.
 - `algorithm_version`: currently `birefnet-hr-matting-lasso-v1`.
@@ -119,7 +120,7 @@ for logs/UI but is not authoritative mask data.
 The worker clips model alpha to:
 
 ```text
-final = birefnet_alpha & lasso_region & document_alpha
+final = birefnet_alpha & selection_region & document_alpha
 ```
 
 There is no hidden grow/feather/erosion step in the worker.

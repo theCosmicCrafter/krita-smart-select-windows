@@ -42,7 +42,10 @@ memory and applies it.
 The canvas/tool layer is native C++.
 
 - Activating Smart Select does not start inference.
-- The user draws a lasso region.
+- Lasso completion edits the current Krita selection using native
+  replace/add/subtract/intersect behavior.
+- The worker starts only when the user presses `Select object with AI`; C++ exports
+  the current selection as the region mask.
 - During worker execution Tool Options shows the current stage and cancel.
 - Result is applied automatically as a native Krita selection.
 - There is no full-image hover/click segment selection in the MVP path.
@@ -54,6 +57,8 @@ Smart Select should follow native Krita selection conventions:
 - default lasso completion replaces selection;
 - Shift adds;
 - Alt/Ctrl actions follow Krita `SelectionAction`;
+- `Select object with AI` refines the current selection, so users can edit the region
+  and rerun without switching tools;
 - click outside current selection should deselect through native Krita selection
   helper semantics when possible;
 - Grow, Feather and Anti-aliasing are standard post-selection options.

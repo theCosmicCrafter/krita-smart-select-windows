@@ -3,15 +3,18 @@
 ## MVP Flow
 
 1. User selects Smart Select.
-2. User draws a lasso around the target object.
-3. C++ exports flattened RGB snapshot, document alpha and lasso region mask.
-4. Worker runs BiRefNet HR Matting on a crop around the lasso.
-5. Worker clips the soft alpha to `lasso_region & document_alpha`.
-6. C++ applies the soft alpha as a native Krita selection.
+2. User draws or edits a normal Krita selection with Smart Select lasso.
+3. User presses `Select object with AI`.
+4. C++ exports flattened RGB snapshot, document alpha and current selection
+   region mask.
+5. Worker runs BiRefNet HR Matting on a crop around that region.
+6. Worker clips the soft alpha to `selection_region & document_alpha`.
+7. C++ applies the soft alpha as a native Krita selection.
 
 ## In Scope
 
 - Native Krita lasso tool UX.
+- Explicit `Select object with AI` action; lasso edits alone do not run inference.
 - Soft alpha selection masks.
 - BiRefNet managed runtime and model cache.
 - Cancel/stale-result safety.
