@@ -2,15 +2,15 @@
 
 ## Goals
 
-Плагин должен быть прозрачен при ошибках и долгих операциях, не раскрывая
-данные документа.
+The plugin should be transparent during failures and long operations without
+exposing document data.
 
-Observability должна помогать:
+Observability should help:
 
-- понять, где job остановился;
-- отличить runtime/model setup от inference failure;
-- диагностировать CUDA/CPU поведение;
-- не логировать image contents, pixel data, mask bytes, tokens or secrets.
+- identify where a job stopped;
+- distinguish runtime/model setup from inference failures;
+- diagnose CUDA/CPU behavior;
+- avoid logging image contents, pixel data, mask bytes, tokens or secrets.
 
 ## OpenTelemetry Compatibility
 

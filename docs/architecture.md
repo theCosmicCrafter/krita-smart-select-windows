@@ -2,7 +2,7 @@
 
 ## Runtime Principles
 
-Inference не должен блокировать UI Krita.
+Inference must not block the Krita UI.
 
 - UI plugin and canvas integration stay responsive.
 - Model download, runtime bootstrap and inference run in a worker process.
@@ -12,7 +12,7 @@ Inference не должен блокировать UI Krita.
 
 ## C++ / Python Split
 
-C++ часть отвечает за:
+The C++ layer is responsible for:
 
 - native Krita tool lifecycle;
 - canvas/image coordinates;
@@ -23,7 +23,7 @@ C++ часть отвечает за:
 - applying returned `selection_mask.npy` as a Krita selection;
 - stale-result protection when tool, image or document changes.
 
-Python часть отвечает за:
+The Python layer is responsible for:
 
 - loader wrapper for the native library;
 - worker process entrypoint;

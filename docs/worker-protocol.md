@@ -4,10 +4,10 @@
 
 Smart Select uses `QProcess` + stdio NDJSON as the worker control channel.
 
-- stdin worker-а принимает one-line JSON requests.
-- stdout worker-а отдаёт one-line JSON progress/results/errors.
-- stderr worker-а считается логом worker process.
-- Большие данные передаются через временные файлы, не через JSON.
+- Worker stdin accepts one-line JSON requests.
+- Worker stdout emits one-line JSON progress, result and error messages.
+- Worker stderr is treated as worker process logs.
+- Large data is passed through temporary files, not JSON.
 
 ## Large Data Files
 

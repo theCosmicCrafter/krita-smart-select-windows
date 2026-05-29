@@ -2,15 +2,14 @@
 
 ## Principle
 
-Статическая типизация желательна, но вводить её нужно как typed islands.
+Static typing is valuable, but it should be introduced as typed islands.
 
-Цель: строго типизировать чистую core-логику и протокольные границы, не пытаясь
-заставить mypy понимать все внутренности Krita/PyQt до того, как архитектура
-станет чистой.
+The goal is to type pure core logic and protocol boundaries strictly without
+forcing mypy to understand every Krita/PyQt integration detail.
 
 ## Strict Areas
 
-Строгая типизация обязательна для:
+Strict typing is required for:
 
 - worker protocol;
 - model registry;
@@ -23,18 +22,18 @@
 
 ## Pragmatic Areas
 
-Типизировать прагматично:
+Use pragmatic typing for:
 
 - Krita/PyQt adapter code;
 - dynamic UI integration;
 - ctypes native loader;
 - dynamic imports for optional runtime dependencies such as torch, PIL,
   transformers and Hugging Face Hub;
-- места, где API Krita не имеет внятных Python stubs.
+- places where the Krita API does not have clear Python stubs.
 
 ## Python Policy
 
-Python code проверяется `mypy`.
+Python code is checked with `mypy`.
 
 Current config:
 
@@ -45,48 +44,47 @@ Current config:
   - `worker`;
   - `python/smart_select`.
 
-Local Krita stubs живут в `typings/krita`.
+Local Krita stubs live in `typings/krita`.
 
 Stub policy:
 
 - Stub only APIs we touch.
-- Не писать полный stub для Krita/PyQt заранее.
-- При добавлении нового использования Krita API расширять локальный stub
-  минимально и конкретно.
+- Do not write a full Krita/PyQt stub up front.
+- When adding new Krita API usage, extend the local stub narrowly and
+  specifically.
 
 ## C++ Policy
 
-- Использовать конкретные типы вместо `QVariant`/loose JSON во внутренней
-  логике.
-- Использовать `enum class` для state.
-- Selection alpha values должны сохраняться как raw `uint8` `0..255`; не
-  binarize before apply.
-- Если worker JSON становится сложнее, парсить его в typed DTO перед передачей
-  глубже в tool/core logic.
+- Use concrete types instead of `QVariant`/loose JSON in internal logic.
+- Use `enum class` for state.
+- Selection alpha values must stay as raw `uint8` `0..255`; do not binarize
+  before apply.
+- If worker JSON becomes more complex, parse it into typed DTOs before passing
+  it deeper into tool/core logic.
 
 ## Commands
 
-Первичная настройка:
+Initial setup:
 
 ```bash
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements-dev.txt
 ```
 
-Проверка:
+Check:
 
 ```bash
 PYTHON=.venv/bin/python ./scripts/test-code.sh
 ```
 
-Только Python formatting/linting:
+Python formatting/linting only:
 
 ```bash
 .venv/bin/python -m ruff format --check python worker tests
 .venv/bin/python -m ruff check python worker tests
 ```
 
-Только mypy:
+mypy only:
 
 ```bash
 .venv/bin/python -m mypy

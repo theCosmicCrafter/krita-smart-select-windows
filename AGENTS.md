@@ -1,20 +1,20 @@
 # AGENTS.md
 
-Короткая памятка для агентов, работающих над Krita Smart Select.
+Short guide for agents working on Krita Smart Select.
 
-## Сначала Читать
+## Read First
 
-- `README.md` - установка, запуск, dev setup и карта документации.
-- `docs/architecture.md` - C++/Python split и canvas tool rules.
-- `docs/worker-protocol.md` - NDJSON protocol и selection mask contract.
+- `README.md` - installation, usage, development setup and documentation map.
+- `docs/architecture.md` - C++/Python split and canvas tool rules.
+- `docs/worker-protocol.md` - NDJSON protocol and selection mask contract.
 - `docs/runtime-env.md` - managed BiRefNet venv/cache policy.
 - `docs/engineering/typing.md` - mypy/stubs policy.
-- `docs/engineering/testing.md` - текущие тесты и команды.
-- `docs/engineering/code-style.md` - Ruff, clang-format и стиль кода.
+- `docs/engineering/testing.md` - current tests and commands.
+- `docs/engineering/code-style.md` - Ruff, clang-format and code style.
 - `docs/engineering/observability.md` - logging/diagnostics/support rules.
-- `docs/licensing.md` - лицензирование кода, модели и релизных пакетов.
+- `docs/licensing.md` - code, model and release-package licensing.
 
-## Базовые Решения
+## Baseline Decisions
 
 - Target: Linux + Krita 5.3.1.
 - Canvas/tool layer: native C++ Krita tool.
@@ -47,7 +47,7 @@
   `crop_alpha_mask.png`, `birefnet_alpha_raw.png`, `final_alpha.png` and
   `metadata.json`.
 
-## Не Переоткрывать Без Причины
+## Do Not Reopen Without A Product Decision
 
 - Do not implement canvas overlay as a floating QWidget or Python-only overlay.
 - Do not pass masks/pixel arrays through JSON.
