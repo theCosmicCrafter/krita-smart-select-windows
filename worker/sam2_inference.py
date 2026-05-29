@@ -62,6 +62,14 @@ class PromptedSelectionResult:
     cuda_available: bool
 
 
+@dataclass(frozen=True)
+class _PromptVariant:
+    name: str
+    point_coords: Sequence[Sequence[float]] | None
+    point_labels: Sequence[int] | None
+    score_weight: float
+
+
 _GENERATOR_CACHE: dict[tuple[str, str, str, str], Any] = {}
 _PREDICTOR_CACHE: dict[tuple[str, str, str, str], Any] = {}
 
@@ -157,15 +165,33 @@ def predict_selection(
     started = time.monotonic()
     try:
         predictor = _predictor_for(spec, checkpoint_path, device)
+        prompt_variants = _prompt_variants(point_coords, point_labels)
+        mask_list: list[Any] = []
+        score_list: list[float] = []
         with torch.inference_mode():
             predictor.set_image(image_array)
-            masks, scores, _logits = predictor.predict(
-                point_coords=numpy_module.array(point_coords, dtype=numpy_module.float32),
-                point_labels=numpy_module.array(point_labels, dtype=numpy_module.int32),
-                box=numpy_module.array(box_xyxy, dtype=numpy_module.float32),
-                multimask_output=True,
-                return_logits=False,
-            )
+            for variant in prompt_variants:
+                coords_array = (
+                    None
+                    if variant.point_coords is None
+                    else numpy_module.array(variant.point_coords, dtype=numpy_module.float32)
+                )
+                labels_array = (
+                    None
+                    if variant.point_labels is None
+                    else numpy_module.array(variant.point_labels, dtype=numpy_module.int32)
+                )
+                masks, scores, _logits = predictor.predict(
+                    point_coords=coords_array,
+                    point_labels=labels_array,
+                    box=numpy_module.array(box_xyxy, dtype=numpy_module.float32),
+                    multimask_output=True,
+                    return_logits=False,
+                )
+                mask_list.extend(_sequence_from_array(masks))
+                score_list.extend(
+                    float(value) * variant.score_weight for value in _sequence_from_array(scores)
+                )
     except Exception as exc:
         if _is_cuda_oom(exc):
             log_event(
@@ -191,8 +217,6 @@ def predict_selection(
         )
         raise InferenceFailed("SAM2 inference failed") from exc
 
-    mask_list = _sequence_from_array(masks)
-    score_list = [float(value) for value in _sequence_from_array(scores)]
     duration_ms = int((time.monotonic() - started) * 1000)
     log_event(
         "sam.predict.result",
@@ -201,6 +225,7 @@ def predict_selection(
             "model.id": spec.id,
             "device.type": device,
             "masks.count": len(mask_list),
+            "prompt.variants.count": len(prompt_variants),
             "duration_ms": duration_ms,
         },
     )
@@ -222,6 +247,42 @@ def runtime_prompted_result_payload(result: PromptedSelectionResult) -> dict[str
         "cuda_available": result.cuda_available,
         "sam2_source_ref": SAM2_SOURCE_REF,
     }
+
+
+def _prompt_variants(
+    point_coords: Sequence[Sequence[float]], point_labels: Sequence[int]
+) -> list[_PromptVariant]:
+    variants = [
+        _PromptVariant(
+            name="all_points",
+            point_coords=point_coords,
+            point_labels=point_labels,
+            score_weight=1.0,
+        )
+    ]
+    positive_points = [
+        coords for coords, label in zip(point_coords, point_labels, strict=False) if label == 1
+    ]
+    has_negative = any(label == 0 for label in point_labels)
+    if has_negative and positive_points:
+        variants.append(
+            _PromptVariant(
+                name="positive_only",
+                point_coords=tuple(positive_points),
+                point_labels=tuple(1 for _point in positive_points),
+                score_weight=0.92,
+            )
+        )
+    if has_negative:
+        variants.append(
+            _PromptVariant(
+                name="box_only",
+                point_coords=None,
+                point_labels=None,
+                score_weight=0.84,
+            )
+        )
+    return variants
 
 
 def _generator_for(spec: ModelSpec, checkpoint_path: Path, device: str) -> Any:

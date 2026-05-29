@@ -24,17 +24,21 @@
 #include <KisViewManager.h>
 #include <KoPointerEvent.h>
 #include <canvas/kis_canvas2.h>
+#include <kis_algebra_2d.h>
 #include <kis_cursor.h>
 #include <kis_floating_message.h>
 #include <kis_image.h>
 #include <kis_selection_tool_config_widget_helper.h>
+#include <kis_selection_tool_helper.h>
 #include <klocalizedstring.h>
+#include <kundo2magicstring.h>
 
 namespace
 {
 
 const QString DEFAULT_MODEL_ID = QStringLiteral("sam2.1_hiera_large");
-const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-lasso-selection-hard-v1");
+const QString DEFAULT_REFINER_ID = QStringLiteral("mam_sam_vith");
+const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-lasso-trimap-mam-v1");
 
 QStringList appendPath(QStringList paths, const QString& path)
 {
@@ -192,6 +196,18 @@ void SmartSelectTool::finishOutline(const QVector<QPointF>& points)
         showNotEditableMessage();
         return;
     }
+    KisCanvas2 *kisCanvas = dynamic_cast<KisCanvas2 *>(canvas());
+    if (kisCanvas) {
+        const QRectF boundingRect = KisAlgebra2D::accumulateBounds(points);
+        KisSelectionToolHelper helper(kisCanvas, kundo2_i18n("Smart Select"));
+        if (helper.tryDeselectCurrentSelection(pixelToView(boundingRect), selectionAction())) {
+            logSmartSelectEvent(SmartSelectLogLevel::Info,
+                QStringLiteral("selection.deselect.shortcut"),
+                { { QStringLiteral("lasso.points.count"), points.size() } });
+            endSelectInteraction();
+            return;
+        }
+    }
     if (points.size() < 3) {
         return;
     }
@@ -275,6 +291,7 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
     const SmartSelectRuntimeConfig& config = SmartSelectRuntimeConfig::instance();
     const QString modelCacheDir = config.modelCacheDir();
     const QString runtimeCacheDir = config.runtimeCacheDir();
+    const QString refinerCacheDir = config.refinerCacheDir();
     if (modelCacheDir.isEmpty() || !QDir().mkpath(modelCacheDir)
         || !QFileInfo(modelCacheDir).isWritable()) {
         logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("model.cache.failed"),
@@ -293,6 +310,15 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
         setState(State::Error, i18n("runtime cache is not writable"));
         return;
     }
+    if (refinerCacheDir.isEmpty() || !QDir().mkpath(refinerCacheDir)
+        || !QFileInfo(refinerCacheDir).isWritable()) {
+        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("refiner.cache.failed"),
+            { { QStringLiteral("error.reason"), QStringLiteral("refiner_cache_not_writable") },
+                { QStringLiteral("refiner.cache.dir"), refinerCacheDir } });
+        cleanupTempFiles(files.cleanupPaths);
+        setState(State::Error, i18n("edge refiner cache is not writable"));
+        return;
+    }
 
     PrepareSelectionRequest request;
     request.imagePath = files.imagePath;
@@ -300,10 +326,12 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
     request.regionMaskPath = regionMaskPath;
     request.regionBbox = regionMask.bbox;
     request.modelId = DEFAULT_MODEL_ID;
+    request.refinerId = DEFAULT_REFINER_ID;
     request.algorithmVersion = ALGORITHM_VERSION;
     request.fingerprint = snapshot.fingerprint;
     request.modelCacheDir = modelCacheDir;
     request.runtimeCacheDir = runtimeCacheDir;
+    request.refinerCacheDir = refinerCacheDir;
     request.canvasSize = snapshot.canvasSize;
 
     m_activeSelectionOptions.action = selectionAction();
@@ -320,6 +348,7 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
         { { QStringLiteral("job.id"), m_activeJobId },
             { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
             { QStringLiteral("model.id"), request.modelId },
+            { QStringLiteral("refiner.id"), request.refinerId },
             { QStringLiteral("algorithm.version"), request.algorithmVersion },
             { QStringLiteral("image.fingerprint.prefix"), fingerprintPrefix(request.fingerprint) },
             { QStringLiteral("image.size"), request.canvasSize },
@@ -455,6 +484,27 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
     }
     if (stage == QStringLiteral("building_selection_mask")) {
         return i18n("Building selection...");
+    }
+    if (stage == QStringLiteral("resolving_refiner")) {
+        return i18n("Preparing edge refiner...");
+    }
+    if (stage == QStringLiteral("checking_refiner_cache")) {
+        return i18n("Checking MAM cache...");
+    }
+    if (stage == QStringLiteral("downloading_refiner")) {
+        return i18n("Downloading MAM...");
+    }
+    if (stage == QStringLiteral("verifying_refiner")) {
+        return i18n("Verifying MAM...");
+    }
+    if (stage == QStringLiteral("loading_refiner")) {
+        return i18n("Loading MAM...");
+    }
+    if (stage == QStringLiteral("running_mam")) {
+        return i18n("Refining edges...");
+    }
+    if (stage == QStringLiteral("building_alpha_mask")) {
+        return i18n("Building alpha selection...");
     }
     return stage;
 }

@@ -76,6 +76,19 @@ It creates a tiny synthetic snapshot, uses the normal worker protocol, writes
 runtime/model caches under Krita user data by default and verifies that the
 worker returns a non-empty selection mask.
 
+## Opt-In Real MAM Smoke
+
+The real MAM smoke is also opt-in because it may download SAM1 ViT-H and MAM
+ViT-H checkpoints and run GPU matting:
+
+```bash
+SMART_SELECT_RUN_MAM_SMOKE=1 ./scripts/test-mam-smoke.sh
+```
+
+It creates a tiny synthetic snapshot/lasso mask, uses the normal
+`prepare_selection` protocol and verifies that `selection_mask.npy` contains
+soft alpha values, not only `0/255`.
+
 ## Current Covered Cases
 
 Python worker tests cover:
@@ -102,7 +115,22 @@ Python worker tests cover:
 - lasso region masks load as `uint8`;
 - lasso region bbox and prompt points are computed;
 - lasso selection masks are clipped to region and alpha;
+- lasso selection mask writer preserves soft alpha values;
 - low-overlap SAM candidates fall back to the lasso region;
+- candidate ranking penalizes surrounding/background masks that hug the lasso
+  boundary;
+- complementary candidates are merged into a recall-oriented SAM prior;
+- small enclosed holes inside the merged SAM prior are filled;
+- SAM prior builder can be tested separately from final alpha writer;
+- MAM refiner registry pins `mam_sam_vith` and exact checkpoint sizes;
+- MAM refiner cache verifies both SAM1 and MAM checkpoints;
+- MAM refiner cache reuses verified files without network calls;
+- MAM refiner cache preserves partial files on cancellation;
+- real `prepare_selection` with fake MAM emits refiner stages and returns a
+  soft selection mask;
+- missing refiner cache dir is rejected for real model requests;
+- SAM2 predictor adds positive-only and box-only prompt variants when generated
+  negative points are present;
 - SAM mask conversion excludes transparent alpha pixels;
 - SAM mask conversion resolves overlaps by score/stability/area priority;
 - tiny masks are dropped from segment maps;
@@ -149,9 +177,10 @@ C++ tests cover:
 - `writeUint8Npy()` rejects wrong payload sizes.
 - `prepare_segments` request serialization includes `model_cache_dir` and
   `runtime_cache_dir`.
-- `prepare_selection` request serialization includes lasso region fields and
-  runtime/model cache dirs;
+- `prepare_selection` request serialization includes lasso region fields,
+  runtime/model/refiner cache dirs and `refiner_id`;
 - `SelectionMask::loadNpy()` accepts valid `uint8` `.npy`;
+- `SelectionMask::bytesForBounds()` preserves soft alpha values;
 - lasso rasterization creates a non-empty bbox and mask bytes.
 
 ## Future Test Additions

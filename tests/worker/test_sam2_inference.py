@@ -44,6 +44,7 @@ class _FakeGenerator:
 class _FakePredictor:
     instances = 0
     set_image_calls = 0
+    predict_calls: list[dict[str, object]] = []
 
     def __init__(self, _model: object, **_params: object) -> None:
         _FakePredictor.instances += 1
@@ -54,6 +55,7 @@ class _FakePredictor:
     def predict(self, **kwargs: object) -> tuple[list[list[list[bool]]], list[float], object]:
         if kwargs.get("multimask_output") is not True:
             raise RuntimeError("multimask_output must be true")
+        _FakePredictor.predict_calls.append(kwargs)
         return ([[[True]]], [0.9], object())
 
 
@@ -65,6 +67,7 @@ class Sam2InferenceTests(unittest.TestCase):
         _FakeGenerator.last_params = None
         _FakePredictor.instances = 0
         _FakePredictor.set_image_calls = 0
+        _FakePredictor.predict_calls = []
 
     def test_generate_masks_uses_cuda_when_available_and_caches_generator(self) -> None:
         with self._patched_imports(cuda_available=True), tempfile.TemporaryDirectory() as temp_dir:
@@ -136,6 +139,28 @@ class Sam2InferenceTests(unittest.TestCase):
         self.assertEqual(_FakePredictor.instances, 1)
         self.assertEqual(_FakePredictor.set_image_calls, 2)
         self.assertEqual(first.scores, [0.9])
+
+    def test_predict_selection_adds_recall_variants_when_negative_points_exist(self) -> None:
+        with self._patched_imports(cuda_available=True), tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint = Path(temp_dir) / "model.pt"
+            checkpoint.write_bytes(b"checkpoint")
+
+            result = sam2_inference.predict_selection(
+                self._spec(),
+                checkpoint,
+                object(),
+                (0.0, 0.0, 10.0, 10.0),
+                ((4.0, 4.0), (0.0, 0.0)),
+                (1, 0),
+            )
+
+        self.assertEqual(len(_FakePredictor.predict_calls), 3)
+        self.assertEqual(len(result.scores), 3)
+        self.assertAlmostEqual(result.scores[0], 0.9)
+        self.assertAlmostEqual(result.scores[1], 0.828)
+        self.assertAlmostEqual(result.scores[2], 0.756)
+        self.assertIsNone(_FakePredictor.predict_calls[2]["point_coords"])
+        self.assertIsNone(_FakePredictor.predict_calls[2]["point_labels"])
 
     @staticmethod
     def _spec() -> ModelSpec:

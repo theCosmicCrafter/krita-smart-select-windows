@@ -65,6 +65,9 @@ Krita:
 - Shift + завершение lasso: add.
 - Alt/Ctrl + завершение lasso: subtract/intersect/toggle в соответствии с нативными
   conventions Krita и доступными `SelectionAction`.
+- Маленький/пустой lasso gesture должен вести себя как стандартный Krita
+  selection tool: click outside current selection deselects when native Krita
+  `tryDeselectCurrentSelection` считает это допустимым.
 
 Точное сопоставление Alt/Ctrl нужно брать из Krita selection tool behavior, а не
 изобретать отдельно.
@@ -78,7 +81,9 @@ Krita:
   `installing_runtime_dependencies`, `validating_runtime`, `resolving_model`,
   `checking_model_cache`, `downloading_model`, `verifying_model`,
   `reading_image`, `preprocessing_image`, `loading_model`, `running_sam`,
-  `building_selection_mask`.
+  `building_selection_mask`, `resolving_refiner`, `checking_refiner_cache`,
+  `downloading_refiner`, `verifying_refiner`, `loading_refiner`, `running_mam`,
+  `building_alpha_mask`.
 - Progress должен появляться быстро, даже если сначала он indeterminate.
 - Должна быть кнопка Cancel.
 - Если пользователь сменил tool, документ или закрыл изображение, job должен
@@ -125,12 +130,20 @@ MVP таргетирует конкретную версию Krita, а не ши
 - worker-side checkpoint download/cache/verify;
 - worker-managed system Python venv/cache для SAM2 runtime;
 - real SAM2.1 Large prompted selection;
-- conversion from SAM masks to full-canvas `uint8` selection mask;
+- conversion from SAM/MAM masks to full-canvas `uint8` selection mask;
+- recall-oriented SAM prior building from multiple prompted candidates;
+- candidate ranking by model score, lasso coverage, prompt points and lasso
+  boundary contact;
+- small enclosed hole fill in the merged prior before final hard clip;
+- trimap-constrained MAM SAM ViT-H alpha refinement on top of the SAM prior;
+- soft alpha selection preservation in C++ selection apply;
+- opt-in debug export for prior/refined/final alpha masks;
 - runtime diagnostics foundation;
 - type checking and code tests.
 
 Ещё не реализовано:
 
 - model picker and lighter model presets;
-- candidate mask debug export;
+- positive/negative point editing UI;
+- preview/confirm flow;
 - persistent logs and support dialog.

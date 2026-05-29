@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import struct
 import sys
@@ -20,11 +21,13 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 import image_preprocessing  # noqa: E402
+import mam_refiner  # noqa: E402
 import region_selection  # noqa: E402
 import runtime_env  # noqa: E402
 import sam2_inference  # noqa: E402
 import segment_map_builder  # noqa: E402
 import selection_mask_builder  # noqa: E402
+import trimap_builder  # noqa: E402
 from job_runner import JobContext, JobRunner  # noqa: E402
 from model_cache import (  # noqa: E402
     ModelCache,
@@ -41,6 +44,21 @@ from model_registry import (  # noqa: E402
     get_model_spec,
 )
 from observability import log_event  # noqa: E402
+from refiner_cache import (  # noqa: E402
+    RefinerCache,
+    RefinerCacheDirMissing,
+    RefinerCacheError,
+    RefinerDownloadCancelled,
+    RefinerDownloadError,
+    RefinerUnavailable,
+    RefinerVerificationError,
+)
+from refiner_registry import (  # noqa: E402
+    RefinerRegistryError,
+    RefinerSpec,
+    default_refiner_id,
+    get_refiner_spec,
+)
 from runtime_diagnostics import collect_runtime_diagnostics  # noqa: E402
 
 
@@ -49,6 +67,22 @@ class SegmentMetadata(TypedDict):
     bbox: list[int]
     area: int
     score: NotRequired[float]
+
+
+class MaskStats(TypedDict):
+    nonzero_pixels: int
+    full_pixels: int
+    soft_pixels: int
+    alpha_sum: int
+    max_alpha: int
+    mean_nonzero_alpha: float
+
+
+class MaskDeltaStats(TypedDict):
+    added_vs_prior_pixels: int
+    removed_vs_prior_pixels: int
+    overlap_pixels: int
+    outside_region_pixels: int
 
 
 class PrepareSegmentsParams(TypedDict, total=False):
@@ -66,6 +100,8 @@ class PrepareSegmentsParams(TypedDict, total=False):
 class PrepareSelectionParams(PrepareSegmentsParams, total=False):
     region_mask_path: str
     region_bbox: list[int]
+    refiner_id: str
+    refiner_cache_dir: str
 
 
 JsonObject = dict[str, Any]
@@ -278,6 +314,8 @@ def error_type_for_runtime_error(error: runtime_env.RuntimeEnvError) -> str:
         return "RuntimeDependencyError"
     if isinstance(error, runtime_env.RuntimeValidationError):
         return "RuntimeValidationError"
+    if isinstance(error, runtime_env.RefinerRuntimeValidationError):
+        return "RefinerRuntimeValidationError"
     return error.__class__.__name__
 
 
@@ -291,6 +329,28 @@ def error_type_for_inference_error(error: sam2_inference.Sam2InferenceError) -> 
     return error.__class__.__name__
 
 
+def error_type_for_refiner_cache_error(error: RefinerCacheError) -> str:
+    if isinstance(error, RefinerCacheDirMissing):
+        return "RefinerCacheDirMissing"
+    if isinstance(error, RefinerDownloadError):
+        return "RefinerDownloadError"
+    if isinstance(error, RefinerVerificationError):
+        return "RefinerVerificationError"
+    if isinstance(error, RefinerDownloadCancelled):
+        return "RefinerDownloadCancelled"
+    if isinstance(error, RefinerUnavailable):
+        return "RefinerUnavailable"
+    return error.__class__.__name__
+
+
+def error_type_for_mam_error(error: mam_refiner.MamRefinerError) -> str:
+    if isinstance(error, mam_refiner.MattingOutOfMemory):
+        return "MattingOutOfMemory"
+    if isinstance(error, mam_refiner.MattingFailed):
+        return "MattingFailed"
+    return error.__class__.__name__
+
+
 def model_result_payload(spec: ModelSpec, cache_status_actual_bytes: int | None) -> JsonObject:
     return {
         "id": spec.id,
@@ -298,6 +358,41 @@ def model_result_payload(spec: ModelSpec, cache_status_actual_bytes: int | None)
         "cache_state": "verified",
         "checkpoint_bytes": cache_status_actual_bytes,
     }
+
+
+def refiner_result_payload(
+    spec: RefinerSpec,
+    result: mam_refiner.MamRefinementResult,
+) -> JsonObject:
+    return mam_refiner.runtime_result_payload(result, spec)
+
+
+def crop_mask_prompt_box(
+    mask: bytes, crop_bbox: tuple[int, int, int, int]
+) -> tuple[float, float, float, float]:
+    width = crop_bbox[2]
+    height = crop_bbox[3]
+    min_x = width
+    min_y = height
+    max_x = -1
+    max_y = -1
+    for y in range(height):
+        row_offset = y * width
+        for x in range(width):
+            if mask[row_offset + x] == 0:
+                continue
+            min_x = min(min_x, x)
+            min_y = min(min_y, y)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+    if max_x < min_x or max_y < min_y:
+        return (0.0, 0.0, float(max(1, width)), float(max(1, height)))
+    padding = max(2, round(max(max_x - min_x + 1, max_y - min_y + 1) * 0.03))
+    x0 = max(0, min_x - padding)
+    y0 = max(0, min_y - padding)
+    x1 = min(width, max_x + 1 + padding)
+    y1 = min(height, max_y + 1 + padding)
+    return (float(x0), float(y0), float(max(x0 + 1, x1)), float(max(y0 + 1, y1)))
 
 
 def is_job_cancelled(job_id: int, context: JobContext | None) -> bool:
@@ -654,6 +749,7 @@ def handle_prepare_selection(
         return
 
     runtime_payload: JsonObject | None = None
+    refiner_payload: JsonObject | None = None
     try:
         selection_input = region_selection.load_region_selection_input(
             image_path,
@@ -725,7 +821,7 @@ def handle_prepare_selection(
 
         emit_progress(job_id, "building_selection_mask")
         try:
-            build_result = selection_mask_builder.build_selection_mask(
+            prior_result = selection_mask_builder.build_sam_prior(
                 inference_result.masks, inference_result.scores, selection_input
             )
         except selection_mask_builder.EmptySelectionError as exc:
@@ -734,6 +830,161 @@ def handle_prepare_selection(
         except ValueError as exc:
             emit_error(job_id, "InferenceFailed", str(exc))
             return
+        try:
+            trimap = trimap_builder.build_trimap_from_prior(
+                prior_result.crop_prior_mask,
+                selection_input.crop_region_mask,
+                selection_input.crop_alpha_mask,
+                selection_input.crop_bbox[2],
+                selection_input.crop_bbox[3],
+            )
+        except ValueError as exc:
+            emit_error(job_id, "MattingFailed", str(exc))
+            return
+
+        emit_progress(job_id, "resolving_refiner")
+        refiner_id_value = params.get("refiner_id", default_refiner_id())
+        refiner_id = (
+            refiner_id_value
+            if isinstance(refiner_id_value, str) and refiner_id_value
+            else default_refiner_id()
+        )
+        try:
+            refiner_spec = get_refiner_spec(refiner_id)
+        except RefinerRegistryError:
+            emit_error(job_id, "RefinerUnavailable", "MAM checkpoint is not available")
+            return
+        if is_job_cancelled(job_id, context):
+            return
+
+        refiner_cache_dir_value = params.get("refiner_cache_dir")
+        if not isinstance(refiner_cache_dir_value, str) or not refiner_cache_dir_value:
+            emit_error(job_id, "RefinerCacheDirMissing", "edge refiner cache is not writable")
+            return
+
+        emit_progress(job_id, "checking_refiner_cache")
+        refiner_cache = RefinerCache(Path(refiner_cache_dir_value))
+
+        def refiner_progress(
+            stage: str, progress: float | None, extra: Mapping[str, object]
+        ) -> None:
+            emit_progress_extra(job_id, stage, progress, extra)
+
+        try:
+            refiner_cache_status = refiner_cache.ensure_downloaded(
+                refiner_spec,
+                refiner_progress,
+                lambda: is_job_cancelled(job_id, context),
+            )
+        except RefinerDownloadCancelled:
+            return
+        except RefinerCacheError as exc:
+            emit_error(job_id, error_type_for_refiner_cache_error(exc), str(exc))
+            return
+        emit_progress(job_id, "verifying_refiner")
+        if is_job_cancelled(job_id, context):
+            return
+
+        try:
+            source_ready = runtime_env.ensure_mam_source(runtime_ready, refiner_progress, context)
+        except runtime_env.RuntimeEnvError as exc:
+            if isinstance(exc, runtime_env.RefinerRuntimeValidationError):
+                mam_result = mam_refiner.fallback_from_sam_prior(
+                    refiner_spec, prior_result.crop_prior_mask, error_type_for_runtime_error(exc)
+                )
+                emit_progress(job_id, "building_alpha_mask")
+                try:
+                    build_result = selection_mask_builder.build_selection_mask_from_crop_alpha(
+                        mam_result.crop_alpha,
+                        selection_input,
+                        prior_result.best_score,
+                        fallback_used=True,
+                    )
+                except selection_mask_builder.EmptySelectionError as empty_exc:
+                    emit_error(job_id, "EmptySelection", str(empty_exc))
+                    return
+                refiner_payload = refiner_result_payload(refiner_spec, mam_result)
+                _write_debug_exports(
+                    selection_input,
+                    prior_result.crop_prior_mask,
+                    mam_result.crop_alpha,
+                    build_result.selection_mask,
+                    build_result.metadata,
+                    trimap,
+                    mam_result,
+                )
+                source_ready = None
+            else:
+                emit_error(job_id, error_type_for_runtime_error(exc), str(exc))
+                return
+        if source_ready is None:
+            if is_job_cancelled(job_id, context):
+                return
+        elif is_job_cancelled(job_id, context):
+            return
+        if source_ready is None:
+            pass
+        else:
+            emit_progress(job_id, "loading_refiner")
+            emit_progress(job_id, "running_mam")
+            mam_input = mam_refiner.MamRefinementInput(
+                crop_rgb=selection_input.crop_image_array,
+                crop_alpha_mask=selection_input.crop_alpha_mask,
+                crop_region_mask=selection_input.crop_region_mask,
+                crop_sam_prior_mask=prior_result.crop_prior_mask,
+                trimap=trimap,
+                crop_bbox=selection_input.crop_bbox,
+                prompt_box_xyxy=crop_mask_prompt_box(
+                    prior_result.crop_prior_mask, selection_input.crop_bbox
+                ),
+                canvas_width=selection_input.canvas_width,
+                canvas_height=selection_input.canvas_height,
+                prior_fallback_used=prior_result.fallback_used,
+                prior_region_coverage=prior_result.region_coverage,
+            )
+            try:
+                mam_result = mam_refiner.refine_with_mam(
+                    refiner_spec,
+                    refiner_cache_status,
+                    runtime_ready,
+                    source_ready,
+                    mam_input,
+                )
+            except mam_refiner.MamRefinerError as exc:
+                if isinstance(exc, mam_refiner.MattingFailed | mam_refiner.MattingOutOfMemory):
+                    mam_result = mam_refiner.fallback_from_sam_prior(
+                        refiner_spec, prior_result.crop_prior_mask, error_type_for_mam_error(exc)
+                    )
+                else:
+                    emit_error(job_id, error_type_for_mam_error(exc), str(exc))
+                    return
+            if is_job_cancelled(job_id, context):
+                return
+
+            emit_progress(job_id, "building_alpha_mask")
+            try:
+                build_result = selection_mask_builder.build_selection_mask_from_crop_alpha(
+                    mam_result.crop_alpha,
+                    selection_input,
+                    prior_result.best_score,
+                    fallback_used=prior_result.fallback_used or mam_result.fallback_used,
+                )
+            except selection_mask_builder.EmptySelectionError as exc:
+                emit_error(job_id, "EmptySelection", str(exc))
+                return
+            except ValueError as exc:
+                emit_error(job_id, "MattingFailed", str(exc))
+                return
+            refiner_payload = refiner_result_payload(refiner_spec, mam_result)
+            _write_debug_exports(
+                selection_input,
+                prior_result.crop_prior_mask,
+                mam_result.crop_alpha,
+                build_result.selection_mask,
+                build_result.metadata,
+                trimap,
+                mam_result,
+            )
 
     if is_job_cancelled(job_id, context):
         return
@@ -776,8 +1027,282 @@ def handle_prepare_selection(
     }
     if runtime_payload is not None:
         result["runtime"] = runtime_payload
+    if refiner_payload is not None:
+        result["refiner"] = refiner_payload
 
     emit({"id": job_id, "result": result})
+
+
+def _write_debug_exports(
+    selection_input: region_selection.RegionSelectionInput,
+    sam_prior_mask: bytes,
+    mam_alpha: bytes,
+    final_alpha: bytes,
+    metadata: Sequence[SegmentMetadata],
+    trimap: trimap_builder.TrimapBuildResult | None = None,
+    mam_result: mam_refiner.MamRefinementResult | None = None,
+) -> None:
+    if not os.environ.get("SMART_SELECT_KEEP_DEBUG_FILES"):
+        return
+    try:
+        image_module = __import__("PIL.Image", fromlist=["Image"])
+        crop_width = selection_input.crop_bbox[2]
+        crop_height = selection_input.crop_bbox[3]
+        debug_dir = Path(tempfile.mkdtemp(prefix="krita-smart-select-debug-")) / "debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        mam_stats = _mask_stats(mam_alpha)
+        prior_stats = _mask_stats(sam_prior_mask)
+        final_stats = _mask_stats(final_alpha)
+        region_stats = _mask_stats(selection_input.crop_region_mask)
+        trimap_stats: dict[str, object] | None = None
+        delta_stats = _mask_delta_stats(
+            sam_prior_mask,
+            mam_alpha,
+            selection_input.crop_region_mask,
+        )
+        image_module.fromarray(selection_input.crop_image_array).save(debug_dir / "crop_rgb.png")
+        _save_debug_mask(
+            image_module,
+            debug_dir / "crop_region_mask.png",
+            selection_input.crop_region_mask,
+            crop_width,
+            crop_height,
+        )
+        _save_debug_mask(
+            image_module,
+            debug_dir / "crop_alpha_mask.png",
+            selection_input.crop_alpha_mask,
+            crop_width,
+            crop_height,
+        )
+        _save_debug_mask(
+            image_module, debug_dir / "sam_prior_mask.png", sam_prior_mask, crop_width, crop_height
+        )
+        _save_debug_mask(
+            image_module, debug_dir / "mam_alpha.png", mam_alpha, crop_width, crop_height
+        )
+        if trimap is not None:
+            _save_debug_mask(
+                image_module,
+                debug_dir / "trimap.png",
+                trimap.trimap_mask,
+                crop_width,
+                crop_height,
+            )
+            _save_debug_mask(
+                image_module,
+                debug_dir / "trimap_core_mask.png",
+                trimap.core_mask,
+                crop_width,
+                crop_height,
+            )
+            _save_debug_mask(
+                image_module,
+                debug_dir / "trimap_unknown_mask.png",
+                trimap.unknown_mask,
+                crop_width,
+                crop_height,
+            )
+            _save_debug_mask(
+                image_module,
+                debug_dir / "trimap_support_mask.png",
+                trimap.support_mask,
+                crop_width,
+                crop_height,
+            )
+            trimap_stats = {
+                "core_area": trimap.core_area,
+                "core_erode_radius": trimap.core_erode_radius,
+                "prior_area": trimap.prior_area,
+                "support_area": trimap.support_area,
+                "support_dilate_radius": trimap.support_dilate_radius,
+                "unknown_area": trimap.unknown_area,
+            }
+        _save_debug_mask(
+            image_module,
+            debug_dir / "final_alpha.png",
+            final_alpha,
+            selection_input.canvas_width,
+            selection_input.canvas_height,
+        )
+        _save_delta_debug_mask(
+            image_module,
+            debug_dir / "mam_added_vs_prior.png",
+            sam_prior_mask,
+            mam_alpha,
+            crop_width,
+            crop_height,
+            added=True,
+        )
+        _save_delta_debug_mask(
+            image_module,
+            debug_dir / "mam_removed_vs_prior.png",
+            sam_prior_mask,
+            mam_alpha,
+            crop_width,
+            crop_height,
+            added=False,
+        )
+        (debug_dir / "metadata.json").write_text(
+            json.dumps(
+                {
+                    "metadata": metadata,
+                    "debug": {
+                        "composition": {
+                            "max_mam_added_vs_prior_fraction": (
+                                mam_refiner.MAX_MAM_ADDED_VS_PRIOR_FRACTION
+                            ),
+                            "max_mam_added_vs_prior_pixels": (
+                                mam_refiner.MAX_MAM_ADDED_VS_PRIOR_PIXELS
+                            ),
+                            "max_mam_area_vs_prior_ratio": (
+                                mam_refiner.MAX_MAM_AREA_VS_PRIOR_RATIO
+                            ),
+                            "max_mam_removed_vs_prior_fraction": (
+                                mam_refiner.MAX_MAM_REMOVED_VS_PRIOR_FRACTION
+                            ),
+                            "max_mam_removed_vs_prior_pixels": (
+                                mam_refiner.MAX_MAM_REMOVED_VS_PRIOR_PIXELS
+                            ),
+                            "min_mam_area_vs_prior_ratio": (
+                                mam_refiner.MIN_MAM_AREA_VS_PRIOR_RATIO
+                            ),
+                            "os1_width": mam_refiner.OS1_WIDTH,
+                            "os4_width": mam_refiner.OS4_WIDTH,
+                            "os8_width": mam_refiner.OS8_WIDTH,
+                        },
+                        "crop_bbox": selection_input.crop_bbox,
+                        "final_alpha": final_stats,
+                        "mam_alpha": mam_stats,
+                        "mam_result": {
+                            "fallback_used": mam_result.fallback_used if mam_result else None,
+                            "rejected": mam_result.rejected if mam_result else None,
+                            "rejection_reason": (
+                                mam_result.rejection_reason if mam_result else None
+                            ),
+                        },
+                        "mam_vs_sam_prior": delta_stats,
+                        "region_mask": region_stats,
+                        "sam_prior_mask": prior_stats,
+                        "trimap": trimap_stats,
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        log_event(
+            "selection.debug_export.metrics",
+            component="worker",
+            **{
+                "selection.area": final_stats["nonzero_pixels"],
+                "selection.alpha_sum": final_stats["alpha_sum"],
+                "selection.soft_pixels": final_stats["soft_pixels"],
+                "selection.prior.area": prior_stats["nonzero_pixels"],
+                "selection.region.area": region_stats["nonzero_pixels"],
+                "refinement.added_vs_prior_pixels": delta_stats["added_vs_prior_pixels"],
+                "refinement.removed_vs_prior_pixels": delta_stats["removed_vs_prior_pixels"],
+                "refinement.outside_region_pixels": delta_stats["outside_region_pixels"],
+                "refinement.mam_full_pixels": mam_stats["full_pixels"],
+                "refinement.mam_soft_pixels": mam_stats["soft_pixels"],
+                "refinement.rejected": mam_result.rejected if mam_result else None,
+                "trimap.core.area": trimap.core_area if trimap else None,
+                "trimap.support.area": trimap.support_area if trimap else None,
+                "trimap.unknown.area": trimap.unknown_area if trimap else None,
+            },
+        )
+        log_event(
+            "selection.debug_export.result",
+            component="worker",
+            **{"file.path": str(debug_dir)},
+        )
+    except Exception as exc:
+        log_event(
+            "selection.debug_export.failed",
+            severity="warning",
+            component="worker",
+            **{"error.type": exc.__class__.__name__, "error.reason": str(exc)},
+        )
+
+
+def _save_debug_mask(image_module: Any, path: Path, data: bytes, width: int, height: int) -> None:
+    image_module.frombytes("L", (width, height), data).save(path)
+
+
+def _save_delta_debug_mask(
+    image_module: Any,
+    path: Path,
+    prior: bytes,
+    candidate: bytes,
+    width: int,
+    height: int,
+    *,
+    added: bool,
+) -> None:
+    if len(prior) != len(candidate):
+        raise ValueError("debug mask sizes differ")
+    output = bytearray(len(prior))
+    for index, (prior_value, candidate_value) in enumerate(zip(prior, candidate, strict=True)):
+        if added:
+            output[index] = 255 if candidate_value > 0 and prior_value == 0 else 0
+        else:
+            output[index] = 255 if prior_value > 0 and candidate_value == 0 else 0
+    image_module.frombytes("L", (width, height), bytes(output)).save(path)
+
+
+def _mask_stats(data: bytes) -> MaskStats:
+    nonzero_pixels = 0
+    full_pixels = 0
+    soft_pixels = 0
+    alpha_sum = 0
+    max_alpha = 0
+    for value in data:
+        alpha_sum += value
+        if value > max_alpha:
+            max_alpha = value
+        if value == 0:
+            continue
+        nonzero_pixels += 1
+        if value == 255:
+            full_pixels += 1
+        else:
+            soft_pixels += 1
+    return {
+        "nonzero_pixels": nonzero_pixels,
+        "full_pixels": full_pixels,
+        "soft_pixels": soft_pixels,
+        "alpha_sum": alpha_sum,
+        "max_alpha": max_alpha,
+        "mean_nonzero_alpha": round(alpha_sum / nonzero_pixels, 4) if nonzero_pixels else 0.0,
+    }
+
+
+def _mask_delta_stats(prior: bytes, candidate: bytes, region: bytes) -> MaskDeltaStats:
+    if len(prior) != len(candidate) or len(prior) != len(region):
+        raise ValueError("debug mask sizes differ")
+    added_vs_prior = 0
+    removed_vs_prior = 0
+    overlap = 0
+    outside_region = 0
+    for prior_value, candidate_value, region_value in zip(prior, candidate, region, strict=True):
+        prior_on = prior_value > 0
+        candidate_on = candidate_value > 0
+        if candidate_on and not prior_on:
+            added_vs_prior += 1
+        if prior_on and not candidate_on:
+            removed_vs_prior += 1
+        if prior_on and candidate_on:
+            overlap += 1
+        if candidate_on and region_value == 0:
+            outside_region += 1
+    return {
+        "added_vs_prior_pixels": added_vs_prior,
+        "removed_vs_prior_pixels": removed_vs_prior,
+        "overlap_pixels": overlap,
+        "outside_region_pixels": outside_region,
+    }
 
 
 def handle_request(request: Mapping[str, Any]) -> None:
@@ -805,6 +1330,7 @@ def handle_request(request: Mapping[str, Any]) -> None:
     elif method == "diagnostics":
         model_cache_dir_value = params_value.get("model_cache_dir")
         runtime_cache_dir_value = params_value.get("runtime_cache_dir")
+        refiner_cache_dir_value = params_value.get("refiner_cache_dir")
         model_cache_dir = (
             Path(model_cache_dir_value)
             if isinstance(model_cache_dir_value, str) and model_cache_dir_value
@@ -815,10 +1341,17 @@ def handle_request(request: Mapping[str, Any]) -> None:
             if isinstance(runtime_cache_dir_value, str) and runtime_cache_dir_value
             else None
         )
+        refiner_cache_dir = (
+            Path(refiner_cache_dir_value)
+            if isinstance(refiner_cache_dir_value, str) and refiner_cache_dir_value
+            else None
+        )
         emit(
             {
                 "id": job_id,
-                "result": collect_runtime_diagnostics(model_cache_dir, runtime_cache_dir),
+                "result": collect_runtime_diagnostics(
+                    model_cache_dir, runtime_cache_dir, refiner_cache_dir
+                ),
             }
         )
     else:

@@ -16,7 +16,7 @@ Krita Smart Select - плагин для Krita, который помогает 
 - Current implementation: native canvas flow, lasso input, flattened snapshot
   export, alpha mask handling, SAM2.1 Large registry/download/cache
   verification, automatic runtime bootstrap and real SAM2.1 Large prompted
-  selection in the worker.
+  selection in the worker, with MAM SAM ViT-H soft alpha refinement.
 - Current product direction: lasso/region-prompted selection is the primary MVP
   path; full-image prepared hover segmentation is legacy/dev compatibility.
 - Not implemented yet: model picker, lighter presets, persistent logs and

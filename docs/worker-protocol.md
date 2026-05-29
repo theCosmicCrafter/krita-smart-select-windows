@@ -31,7 +31,7 @@ Shared memory можно рассмотреть позже, если време�
 Primary MVP request for the lasso workflow:
 
 ```json
-{"id":1,"method":"prepare_selection","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","region_mask_path":"/tmp/region_mask.npy","region_bbox":[100,120,420,360],"model_id":"sam2.1_hiera_large","algorithm_version":"sam2.1-lasso-selection-hard-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime"}}
+{"id":1,"method":"prepare_selection","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","region_mask_path":"/tmp/region_mask.npy","region_bbox":[100,120,420,360],"model_id":"sam2.1_hiera_large","refiner_id":"mam_sam_vith","algorithm_version":"sam2.1-lasso-trimap-mam-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime","refiner_cache_dir":"/home/user/.local/share/krita/smart_select/refiners"}}
 ```
 
 Parameters:
@@ -45,12 +45,16 @@ Parameters:
 - `region_bbox`: `[x, y, width, height]` bounds lasso-области в canvas
   coordinates. Worker может использовать bbox + padding для crop inference.
 - `model_id`: registry id модели, например `sam2.1_hiera_large`.
+- `refiner_id`: optional refiner id. Current default for real model requests is
+  `mam_sam_vith`.
 - `algorithm_version`: версия алгоритма подготовки selection mask.
 - `fingerprint`: fingerprint snapshot-а и region input.
 - `canvas_width`: ширина canvas в image pixels.
 - `canvas_height`: высота canvas в image pixels.
 - `model_cache_dir`: writable directory для checkpoint cache.
 - `runtime_cache_dir`: writable directory для managed Python venv/cache.
+- `refiner_cache_dir`: writable directory для MAM/SAM1 refiner checkpoints.
+  Обязателен для `mam_sam_vith`.
 
 `prepare_selection` возвращает mask, применяемую как Krita selection. Full-image
 hover hit-test не является частью этого request-а.
@@ -81,7 +85,7 @@ Parameters:
 
 Текущий MVP real-inference path использует `prepare_selection`,
 `model_id="sam2.1_hiera_large"` и
-`algorithm_version="sam2.1-lasso-selection-hard-v1"`. Legacy full-image
+`algorithm_version="sam2.1-lasso-trimap-mam-v1"`. Legacy full-image
 `prepare_segments` path сохраняет собственную algorithm version только для
 spike/dev compatibility.
 
@@ -148,10 +152,20 @@ Legacy full-image stages:
 
 C++ может игнорировать unknown fields.
 
+MAM/refiner stages:
+
+- `resolving_refiner`
+- `checking_refiner_cache`
+- `downloading_refiner`
+- `verifying_refiner`
+- `loading_refiner`
+- `running_mam`
+- `building_alpha_mask`
+
 ## Success
 
 ```json
-{"id":1,"result":{"selection_mask_path":"/tmp/selection_mask.npy","segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[{"id":1,"bbox":[0,0,100,100],"area":10000,"score":1.0}],"model":{"id":"sam2.1_hiera_large","title":"SAM2.1 Hiera Large","cache_state":"verified","checkpoint_bytes":898089053},"runtime":{"version":"sam2-runtime-v3","cache_state":"ready","device":"cuda","torch_version":"2.6.0+cu124","cuda_available":true,"sam2_source_ref":"2b90b9f5ceec907a1c18123530e92e794ad901a4"}}}
+{"id":1,"result":{"selection_mask_path":"/tmp/selection_mask.npy","segment_map_path":"/tmp/segment_map.npy","segments_path":"/tmp/segments.npz","metadata":[{"id":1,"bbox":[0,0,100,100],"area":10000,"score":1.0}],"model":{"id":"sam2.1_hiera_large","title":"SAM2.1 Hiera Large","cache_state":"verified","checkpoint_bytes":898089053},"runtime":{"version":"sam2-runtime-v3","cache_state":"ready","device":"cuda","torch_version":"2.6.0+cu124","cuda_available":true,"sam2_source_ref":"2b90b9f5ceec907a1c18123530e92e794ad901a4"},"refiner":{"id":"mam_sam_vith","title":"MAM SAM ViT-H","cache_state":"verified","device":"cuda","sam_checkpoint_bytes":2564550879,"mam_checkpoint_bytes":32785332}}}
 ```
 
 Fields:
@@ -163,11 +177,39 @@ Fields:
 - `metadata`: segment metadata list.
 - `model`: optional model readiness metadata for logs/diagnostics.
 - `runtime`: optional runtime/inference metadata for logs/diagnostics.
+- `refiner`: optional refiner metadata for logs/diagnostics.
 
 Current lasso MVP rule: C++ authoritative source for selection apply is
 `selection_mask.npy` when present. Full-image hover/click spike can still use
 `segment_map.npy` as authoritative source for hit-testing. Worker metadata is
 useful for logs/UI but must not be trusted as mask data.
+
+For `prepare_selection`, worker-side mask choice is intentionally not a raw
+“highest SAM score wins” decision. The worker builds a recall-oriented SAM prior:
+
+- run the predictor with the lasso bbox and generated points;
+- when negative points exist, also run positive-only and box-only prompt
+  variants with lower score weight;
+- score candidates against the lasso region and generated prompt points;
+- penalize candidates that mostly hug the lasso boundary or hit negative points;
+- merge compatible candidates so missing object parts can be recovered;
+- fill small enclosed holes;
+- hard-clip the result to lasso and alpha.
+
+The current primary path refines that prior with MAM SAM ViT-H and writes a
+soft alpha selection mask. Before MAM runs, the worker converts the SAM prior
+into a trimap:
+
+- `core`: eroded SAM prior, always preserved as foreground;
+- `unknown`: narrow support band around the prior where MAM may refine alpha;
+- `background`: everything outside support, lasso or document alpha.
+
+MAM output is accepted only if it stays close to the SAM prior by area and by
+added/removed pixels. If the gate rejects the matte, the worker falls back to
+the SAM prior and marks the refiner payload as `rejected_mam`. If MAM inference
+fails after a valid prior exists, the worker may fall back to the SAM prior and
+mark the payload as `fallback_sam_prior`. Invalid or unavailable H checkpoint
+metadata is a setup error and must not silently fall back to ViT-B.
 
 ## Error
 
@@ -197,6 +239,13 @@ Expected model readiness error types:
 - `InferenceFailed`
 - `ImageTooLarge`
 - `WorkerBusy`
+- `RefinerCacheDirMissing`
+- `RefinerDownloadError`
+- `RefinerVerificationError`
+- `RefinerRuntimeValidationError`
+- `RefinerUnavailable`
+- `MattingFailed`
+- `MattingOutOfMemory`
 
 ## Segment Map Contract
 
@@ -234,7 +283,8 @@ explicitly on both C++ and worker sides.
 - Current dtype: `|u1` / `uint8`.
 - Shape: `[canvas_height, canvas_width]`.
 - Value `0`: not selected.
-- Value `1..255`: selected.
+- Value `1..254`: soft/partial selection alpha.
+- Value `255`: fully selected.
 - Coordinate convention: image pixel coordinates, origin top-left.
 
 ## Segment Metadata Contract

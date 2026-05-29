@@ -10,8 +10,10 @@ from typing import Any
 
 from model_cache import ModelCache
 from model_registry import all_model_specs
+from refiner_cache import RefinerCache
+from refiner_registry import all_refiner_specs
 from runtime_env import runtime_status
-from runtime_manifest import RUNTIME_VERSION, SAM2_SOURCE_REF
+from runtime_manifest import MAM_SOURCE_REF, RUNTIME_VERSION, SAM2_SOURCE_REF
 
 JsonObject = dict[str, Any]
 
@@ -84,21 +86,44 @@ def _runtime_marker(path: Path) -> JsonObject:
 
 
 def collect_runtime_diagnostics(
-    model_cache_dir: Path | None, runtime_cache_dir: Path | None = None
+    model_cache_dir: Path | None,
+    runtime_cache_dir: Path | None = None,
+    refiner_cache_dir: Path | None = None,
 ) -> JsonObject:
     models: list[JsonObject] = []
     cache = ModelCache(model_cache_dir) if model_cache_dir is not None else None
-    for spec in all_model_specs():
-        if spec.id == "mock":
+    for model_spec in all_model_specs():
+        if model_spec.id == "mock":
             continue
-        status = cache.status(spec) if cache is not None else None
+        model_status = cache.status(model_spec) if cache is not None else None
         models.append(
             {
-                "id": spec.id,
-                "title": spec.title,
-                "cache_state": status.state if status is not None else "missing",
-                "expected_bytes": spec.expected_bytes,
-                "actual_bytes": status.actual_bytes if status is not None else None,
+                "id": model_spec.id,
+                "title": model_spec.title,
+                "cache_state": model_status.state if model_status is not None else "missing",
+                "expected_bytes": model_spec.expected_bytes,
+                "actual_bytes": model_status.actual_bytes if model_status is not None else None,
+            }
+        )
+
+    refiners: list[JsonObject] = []
+    refiner_cache = RefinerCache(refiner_cache_dir) if refiner_cache_dir is not None else None
+    for refiner_spec in all_refiner_specs():
+        refiner_status = refiner_cache.status(refiner_spec) if refiner_cache is not None else None
+        refiners.append(
+            {
+                "id": refiner_spec.id,
+                "title": refiner_spec.title,
+                "cache_state": refiner_status.state if refiner_status is not None else "missing",
+                "source_ref": refiner_spec.source_ref,
+                "sam_expected_bytes": refiner_spec.sam_expected_bytes,
+                "sam_actual_bytes": (
+                    refiner_status.sam_actual_bytes if refiner_status is not None else None
+                ),
+                "mam_expected_bytes": refiner_spec.mam_expected_bytes,
+                "mam_actual_bytes": (
+                    refiner_status.mam_actual_bytes if refiner_status is not None else None
+                ),
             }
         )
 
@@ -113,5 +138,9 @@ def collect_runtime_diagnostics(
         },
         "torch": _torch_diagnostics(),
         "runtime": _runtime_diagnostics(runtime_cache_dir),
+        "mam": {
+            "source_ref": MAM_SOURCE_REF,
+        },
         "models": models,
+        "refiners": refiners,
     }

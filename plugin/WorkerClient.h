@@ -31,6 +31,8 @@ struct PrepareSelectionRequest
     QString fingerprint;
     QString modelCacheDir;
     QString runtimeCacheDir;
+    QString refinerId;
+    QString refinerCacheDir;
     QSize canvasSize;
 };
 
@@ -73,6 +75,8 @@ inline QJsonObject prepareSelectionRequestJson(int id, const PrepareSelectionReq
     params["fingerprint"] = request.fingerprint;
     params["model_cache_dir"] = request.modelCacheDir;
     params["runtime_cache_dir"] = request.runtimeCacheDir;
+    params["refiner_id"] = request.refinerId;
+    params["refiner_cache_dir"] = request.refinerCacheDir;
     params["canvas_width"] = request.canvasSize.width();
     params["canvas_height"] = request.canvasSize.height();
 

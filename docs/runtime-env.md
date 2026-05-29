@@ -18,6 +18,11 @@ Runtime layout:
     sam2.1_hiera_large/
       sam2.1_hiera_large.pt
       model.json
+  refiners/
+    mam_sam_vith/
+      sam_vit_h_4b8939.pth
+      mam_vith.pth
+      refiner.json
 ```
 
 If Krita does not provide `QStandardPaths::AppDataLocation`, the fallback is:
@@ -40,6 +45,8 @@ Pinned runtime defaults:
 - PyTorch wheel index: `https://download.pytorch.org/whl/cu124`
 - SAM2 custom CUDA extension: enabled with `SAM2_BUILD_CUDA=1`
 - SAM2 extension build errors: fail-fast with `SAM2_BUILD_ALLOW_ERRORS=0`
+- MAM source: `SHI-Labs/Matting-Anything`
+- MAM source ref: `eb01e1c1f0016e2a4d00615b115f3b5ddcd031e4`
 
 Install sequence:
 
@@ -102,6 +109,33 @@ process before Python 3.12 starts. This is required for loading compiled CUDA
 extensions such as `sam2._C`, because dynamic library lookup needs the CUDA
 library directories at process startup.
 
+## MAM Refiner Runtime
+
+MAM uses the same managed venv/cache as SAM2. The worker does not create a
+second refiner-specific virtualenv and does not install MAM into the plugin
+source tree.
+
+The worker clones the pinned Matting-Anything source into:
+
+```text
+<runtime_cache_dir>/sources/matting-anything/eb01e1c1f0016e2a4d00615b115f3b5ddcd031e4/
+```
+
+For the Krita path the worker imports only the MAM network code and the bundled
+`segment-anything` package. GroundingDINO, Stable Diffusion, Gradio and text
+prompt dependencies remain out of scope. The adapter avoids OpenCV-dependent
+pre/post-processing and uses PIL/numpy/torch for the Krita worker path.
+
+Refiner checkpoint cache is separate from the Python runtime cache:
+
+- SAM1 ViT-H: `sam_vit_h_4b8939.pth`, `2564550879` bytes.
+- MAM ViT-H: `mam_vith.pth`, Google Drive file id
+  `1fmBLZMWfGE2QOsc3pPqhzzlvBYojLBox`, `32785332` bytes.
+
+No ViT-B fallback is allowed in the product path. Runtime or inference failures
+after a valid SAM prior may fall back to the prior; checkpoint metadata/cache
+failures remain setup errors.
+
 ## Inference Device Policy
 
 - Use CUDA when `torch.cuda.is_available()`.
@@ -129,3 +163,7 @@ cleans temp output and does not emit a result.
 The `diagnostics` request may include `runtime_cache_dir`. It reports runtime
 cache state, CUDA toolkit path and `sam2._C` availability, but never installs
 dependencies and never reads image inputs.
+
+Diagnostics may also include `refiner_cache_dir`. It reports MAM/SAM1 refiner
+cache state and expected/actual checkpoint sizes, but never downloads or imports
+MAM during diagnostics.

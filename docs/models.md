@@ -136,9 +136,76 @@ UI-ветки.
 Mock model id всё ещё поддерживается для быстрых тестов и development smoke.
 
 Current MVP quality path uses `SAM2ImagePredictor` with lasso-derived bbox,
-positive points and negative points. Full-image automatic mask generation
-remains available only in the legacy `prepare_segments` worker path for
-development compatibility.
+positive points and negative points. The lasso helper generates foreground
+points across the region and background points near the region boundary, similar
+to the prompt-driven SAM workflow used by InvokeAI.
+
+For quality, the worker now treats SAM output as a recall-oriented prior rather
+than a single final mask. When negative points are present, the predictor is run
+with additional prompt variants:
+
+- bbox + all generated points;
+- bbox + positive points only;
+- bbox only.
+
+The positive-only and box-only variants are down-weighted, but their candidates
+can still contribute missing object parts. Returned candidates are ranked by
+model score, region coverage, candidate precision, prompt-point hits and
+lasso-boundary contact. Compatible candidates are merged into a coarse prior,
+then small enclosed holes are filled before the final hard clip to
+`SAM_prior & lasso_region & alpha_mask`.
+
+This is intentionally biased toward recall: for the future MAM/matting step it
+is better for the coarse SAM prior to contain slightly too much of the lasso
+region than to lose object parts before alpha refinement. MAM/trimap refinement
+is a follow-up and should consume this prior instead of requiring a perfect SAM
+binary mask.
+
+Full-image automatic mask generation remains available only in the legacy
+`prepare_segments` worker path for development compatibility.
+
+## MAM Alpha Refinement
+
+Default lasso selection now adds a quality-first matting refinement step after
+the recall-oriented SAM2 prior.
+
+Active refiner:
+
+- id: `mam_sam_vith`
+- title: MAM SAM ViT-H
+- source: `SHI-Labs/Matting-Anything`
+- source ref: `eb01e1c1f0016e2a4d00615b115f3b5ddcd031e4`
+- config: `config/MAM-ViTH-8gpu.toml`
+- SAM1 checkpoint: `sam_vit_h_4b8939.pth`
+- SAM1 expected size: `2564550879` bytes
+- MAM checkpoint: `mam_vith.pth`
+- MAM Google Drive file id: `1fmBLZMWfGE2QOsc3pPqhzzlvBYojLBox`
+- MAM expected size: `32785332` bytes
+
+MAM is not a SAM2 head. It uses SAM1 ViT-H feature maps plus a Mask-to-Matte
+module. The worker feeds the current SAM2 recall prior into MAM as trimap
+guidance, then writes a soft `uint8` alpha selection mask. The trimap has three
+zones:
+
+- `core`: eroded SAM2 prior, preserved as definite foreground;
+- `unknown`: a narrow dilated support band where MAM may refine alpha;
+- `background`: outside support, outside the lasso, or transparent document
+  alpha.
+
+MAM is treated as a boundary/alpha refiner, not a broad permission source. It
+can add or remove detail only inside the unknown band. A post-refinement gate
+compares MAM alpha against the SAM prior; if MAM grows or shrinks the result too
+aggressively, the worker rejects it and falls back to the SAM prior with
+`cache_state="rejected_mam"`. The final alpha is also clipped to the user lasso
+region and the document alpha mask.
+
+There is intentionally no silent ViT-B fallback. If the H checkpoint metadata or
+cache is invalid, the refiner reports a setup error. Runtime/inference failures
+after a valid SAM prior may fall back to the SAM prior and mark the refiner
+payload as `fallback_sam_prior`.
+
+Krita `Grow`, `Feather` and `Anti-aliasing` remain user-controlled
+post-selection options. The worker does not add a hidden final grow step.
 
 Follow-up: добавить настройку VRAM/performance budget в model picker. Для
 слабых GPU пользователь должен иметь возможность выбрать меньшую модель или

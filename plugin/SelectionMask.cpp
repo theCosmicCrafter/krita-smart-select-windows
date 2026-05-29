@@ -139,7 +139,7 @@ QByteArray SelectionMask::bytesForBounds(const QRect& requestedBounds) const
         const int sourceY = clipped.y() + y;
         for (int x = 0; x < clipped.width(); ++x) {
             const int sourceX = clipped.x() + x;
-            out[y * clipped.width() + x] = m_pixels[sourceY * m_width + sourceX] > 0 ? 255 : 0;
+            out[y * clipped.width() + x] = m_pixels[sourceY * m_width + sourceX];
         }
     }
     return bytes;

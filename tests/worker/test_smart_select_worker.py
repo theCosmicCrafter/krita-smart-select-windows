@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+WORKER_DIR = ROOT_DIR / "worker"
 WORKER_PATH = ROOT_DIR / "worker" / "smart_select_worker.py"
+if str(WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKER_DIR))
+
+from refiner_cache import RefinerCacheStatus  # noqa: E402
 
 
 def load_worker_module() -> Any:
@@ -180,6 +185,258 @@ class SmartSelectWorkerTests(unittest.TestCase):
                 )
                 if cleanup_dir is not None:
                     shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+    def test_prepare_selection_real_model_emits_refiner_stages_and_soft_mask(self) -> None:
+        output = io.StringIO()
+        cleanup_dir: Path | None = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            image_path = temp / "snapshot.png"
+            image_path.write_bytes(b"placeholder")
+            alpha_path = temp / "alpha.npy"
+            region_path = temp / "region.npy"
+            self.worker.write_npy(alpha_path, "|u1", (4, 4), b"\xff" * 16)
+            self.worker.write_npy(region_path, "|u1", (4, 4), b"\xff" * 16)
+            model_cache_root = temp / "models"
+            model_dir = model_cache_root / "sam2.1_hiera_large"
+            model_dir.mkdir(parents=True)
+            (model_dir / "sam2.1_hiera_large.pt").write_bytes(b"verified")
+            spec = self.worker.ModelSpec(
+                id="sam2.1_hiera_large",
+                title="SAM2.1 Hiera Large",
+                family="sam2.1",
+                checkpoint_url="https://example.invalid/model.pt",
+                checkpoint_filename="sam2.1_hiera_large.pt",
+                config_name="configs/sam2.1/sam2.1_hiera_l.yaml",
+                expected_bytes=8,
+                etag='"etag"',
+                recommended_ram_gb=32,
+                recommended_vram_gb=12,
+                profile="quality",
+                requires_download=True,
+            )
+            refiner_spec = self.worker.get_refiner_spec("mam_sam_vith")
+            selection_input = self.worker.region_selection.RegionSelectionInput(
+                crop_image_array=object(),
+                crop_alpha_mask=b"\xff" * 16,
+                crop_region_mask=b"\xff" * 16,
+                crop_bbox=(0, 0, 4, 4),
+                region_bbox=(0, 0, 4, 4),
+                prompt_box_xyxy=(0.0, 0.0, 4.0, 4.0),
+                point_coords=((2.0, 2.0),),
+                point_labels=(1,),
+                canvas_width=4,
+                canvas_height=4,
+            )
+
+            original_get_model_spec = self.worker.get_model_spec
+            original_load_region = self.worker.region_selection.load_region_selection_input
+            original_ensure_runtime = self.worker.runtime_env.ensure_runtime
+            original_ensure_mam_source = self.worker.runtime_env.ensure_mam_source
+            original_predict_selection = self.worker.sam2_inference.predict_selection
+            original_refiner_cache = self.worker.RefinerCache
+            original_refine = self.worker.mam_refiner.refine_with_mam
+            self.worker.get_model_spec = lambda _model_id: spec
+            self.worker.region_selection.load_region_selection_input = (
+                lambda *_args, **_kwargs: selection_input
+            )
+
+            def fake_ensure_runtime(_root: Path, progress: Any, _context: Any = None) -> Any:
+                progress("checking_runtime", None, {})
+                return self.worker.runtime_env.RuntimeReady(
+                    root=temp / "runtime",
+                    venv_path=temp / "runtime" / "venv",
+                    python_executable=temp / "runtime" / "venv" / "bin" / "python",
+                    site_packages=temp / "runtime" / "venv" / "site-packages",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                    cuda_home="/usr/local/cuda-12.4",
+                    sam2_cuda_extension=True,
+                )
+
+            class FakeRefinerCache:
+                def __init__(self, _root: Path) -> None:
+                    pass
+
+                def ensure_downloaded(self, _spec: Any, progress: Any, _cancelled: Any) -> Any:
+                    progress("downloading_refiner", 1.0, {})
+                    return RefinerCacheStatus(
+                        refiner_id=refiner_spec.id,
+                        state="verified",
+                        sam_checkpoint_path=temp / "sam.pth",
+                        mam_checkpoint_path=temp / "mam.pth",
+                        sam_actual_bytes=refiner_spec.sam_expected_bytes,
+                        mam_actual_bytes=refiner_spec.mam_expected_bytes,
+                    )
+
+            self.worker.runtime_env.ensure_runtime = fake_ensure_runtime
+            self.worker.runtime_env.ensure_mam_source = lambda *_args, **_kwargs: (
+                self.worker.runtime_env.MamSourceReady(temp / "source", refiner_spec.source_ref)
+            )
+            self.worker.sam2_inference.predict_selection = lambda *_args, **_kwargs: (
+                self.worker.sam2_inference.PromptedSelectionResult(
+                    masks=[[[True for _x in range(4)] for _y in range(4)]],
+                    scores=[0.9],
+                    device="cuda",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                )
+            )
+            self.worker.RefinerCache = FakeRefinerCache
+            self.worker.mam_refiner.refine_with_mam = lambda *_args, **_kwargs: (
+                self.worker.mam_refiner.MamRefinementResult(
+                    crop_alpha=bytes([0, 64, 128, 255] * 4),
+                    device="cuda",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                    duration_ms=1,
+                )
+            )
+            try:
+                with contextlib.redirect_stdout(output):
+                    self.worker.handle_prepare_selection(
+                        72,
+                        {
+                            "image_path": str(image_path),
+                            "alpha_mask_path": str(alpha_path),
+                            "region_mask_path": str(region_path),
+                            "region_bbox": [0, 0, 4, 4],
+                            "model_cache_dir": str(model_cache_root),
+                            "runtime_cache_dir": str(temp / "runtime"),
+                            "refiner_cache_dir": str(temp / "refiners"),
+                            "model_id": "sam2.1_hiera_large",
+                            "refiner_id": "mam_sam_vith",
+                            "fingerprint": "fingerprint",
+                            "canvas_width": 4,
+                            "canvas_height": 4,
+                        },
+                    )
+            finally:
+                self.worker.get_model_spec = original_get_model_spec
+                self.worker.region_selection.load_region_selection_input = original_load_region
+                self.worker.runtime_env.ensure_runtime = original_ensure_runtime
+                self.worker.runtime_env.ensure_mam_source = original_ensure_mam_source
+                self.worker.sam2_inference.predict_selection = original_predict_selection
+                self.worker.RefinerCache = original_refiner_cache
+                self.worker.mam_refiner.refine_with_mam = original_refine
+
+            messages = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertIn("resolving_refiner", [message.get("stage") for message in messages])
+            self.assertIn("running_mam", [message.get("stage") for message in messages])
+            self.assertIn("building_alpha_mask", [message.get("stage") for message in messages])
+            result = messages[-1]["result"]
+            cleanup_dir = Path(result["selection_mask_path"]).parent
+            descr, shape, payload = parse_npy_header(Path(result["selection_mask_path"]))
+            self.assertEqual(descr, "|u1")
+            self.assertEqual(shape, (4, 4))
+            self.assertEqual(payload[1], 64)
+            self.assertEqual(payload[2], 128)
+            self.assertEqual(result["refiner"]["id"], "mam_sam_vith")
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+    def test_prepare_selection_real_model_without_refiner_cache_dir_returns_error(self) -> None:
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            image_path = temp / "snapshot.png"
+            image_path.write_bytes(b"placeholder")
+            alpha_path = temp / "alpha.npy"
+            region_path = temp / "region.npy"
+            self.worker.write_npy(alpha_path, "|u1", (4, 4), b"\xff" * 16)
+            self.worker.write_npy(region_path, "|u1", (4, 4), b"\xff" * 16)
+            model_cache_root = temp / "models"
+            model_dir = model_cache_root / "sam2.1_hiera_large"
+            model_dir.mkdir(parents=True)
+            (model_dir / "sam2.1_hiera_large.pt").write_bytes(b"verified")
+            spec = self.worker.ModelSpec(
+                id="sam2.1_hiera_large",
+                title="SAM2.1 Hiera Large",
+                family="sam2.1",
+                checkpoint_url="https://example.invalid/model.pt",
+                checkpoint_filename="sam2.1_hiera_large.pt",
+                config_name="configs/sam2.1/sam2.1_hiera_l.yaml",
+                expected_bytes=8,
+                etag='"etag"',
+                recommended_ram_gb=32,
+                recommended_vram_gb=12,
+                profile="quality",
+                requires_download=True,
+            )
+            selection_input = self.worker.region_selection.RegionSelectionInput(
+                crop_image_array=object(),
+                crop_alpha_mask=b"\xff" * 16,
+                crop_region_mask=b"\xff" * 16,
+                crop_bbox=(0, 0, 4, 4),
+                region_bbox=(0, 0, 4, 4),
+                prompt_box_xyxy=(0.0, 0.0, 4.0, 4.0),
+                point_coords=((2.0, 2.0),),
+                point_labels=(1,),
+                canvas_width=4,
+                canvas_height=4,
+            )
+            original_get_model_spec = self.worker.get_model_spec
+            original_load_region = self.worker.region_selection.load_region_selection_input
+            original_ensure_runtime = self.worker.runtime_env.ensure_runtime
+            original_predict_selection = self.worker.sam2_inference.predict_selection
+            self.worker.get_model_spec = lambda _model_id: spec
+            self.worker.region_selection.load_region_selection_input = (
+                lambda *_args, **_kwargs: selection_input
+            )
+            self.worker.runtime_env.ensure_runtime = lambda *_args, **_kwargs: (
+                self.worker.runtime_env.RuntimeReady(
+                    root=temp / "runtime",
+                    venv_path=temp / "runtime" / "venv",
+                    python_executable=temp / "runtime" / "venv" / "bin" / "python",
+                    site_packages=temp / "runtime" / "venv" / "site-packages",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                    cuda_home="/usr/local/cuda-12.4",
+                    sam2_cuda_extension=True,
+                )
+            )
+            self.worker.sam2_inference.predict_selection = lambda *_args, **_kwargs: (
+                self.worker.sam2_inference.PromptedSelectionResult(
+                    masks=[[[True for _x in range(4)] for _y in range(4)]],
+                    scores=[0.9],
+                    device="cuda",
+                    torch_version="2.5.1",
+                    cuda_available=True,
+                )
+            )
+            try:
+                with contextlib.redirect_stdout(output):
+                    self.worker.handle_prepare_selection(
+                        73,
+                        {
+                            "image_path": str(image_path),
+                            "alpha_mask_path": str(alpha_path),
+                            "region_mask_path": str(region_path),
+                            "region_bbox": [0, 0, 4, 4],
+                            "model_cache_dir": str(model_cache_root),
+                            "runtime_cache_dir": str(temp / "runtime"),
+                            "model_id": "sam2.1_hiera_large",
+                            "canvas_width": 4,
+                            "canvas_height": 4,
+                        },
+                    )
+            finally:
+                self.worker.get_model_spec = original_get_model_spec
+                self.worker.region_selection.load_region_selection_input = original_load_region
+                self.worker.runtime_env.ensure_runtime = original_ensure_runtime
+                self.worker.sam2_inference.predict_selection = original_predict_selection
+
+            messages = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(messages[-1]["error"]["type"], "RefinerCacheDirMissing")
+
+    def test_crop_mask_prompt_box_uses_nonzero_prior_bounds(self) -> None:
+        mask = bytearray(100)
+        for y in range(4, 7):
+            for x in range(3, 6):
+                mask[y * 10 + x] = 255
+
+        box = self.worker.crop_mask_prompt_box(bytes(mask), (0, 0, 10, 10))
+
+        self.assertEqual(box, (1.0, 2.0, 8.0, 9.0))
 
     def test_prepare_segments_rejects_invalid_canvas_size(self) -> None:
         output = io.StringIO()

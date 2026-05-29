@@ -343,10 +343,12 @@ void SmartSelectCoreTest::workerPrepareSelectionRequestIncludesRegionFields()
     request.regionMaskPath = QStringLiteral("/tmp/region.npy");
     request.regionBbox = QRect(1, 2, 3, 4);
     request.modelId = QStringLiteral("sam2.1_hiera_large");
-    request.algorithmVersion = QStringLiteral("sam2.1-lasso-selection-hard-v1");
+    request.refinerId = QStringLiteral("mam_sam_vith");
+    request.algorithmVersion = QStringLiteral("sam2.1-lasso-trimap-mam-v1");
     request.fingerprint = QStringLiteral("fingerprint");
     request.modelCacheDir = QStringLiteral("/tmp/models");
     request.runtimeCacheDir = QStringLiteral("/tmp/runtime");
+    request.refinerCacheDir = QStringLiteral("/tmp/refiners");
     request.canvasSize = QSize(64, 48);
 
     const QJsonObject message = prepareSelectionRequestJson(13, request);
@@ -365,13 +367,15 @@ void SmartSelectCoreTest::workerPrepareSelectionRequestIncludesRegionFields()
     QCOMPARE(
         params.value(QStringLiteral("algorithm_version")).toString(), request.algorithmVersion);
     QCOMPARE(params.value(QStringLiteral("runtime_cache_dir")).toString(), request.runtimeCacheDir);
+    QCOMPARE(params.value(QStringLiteral("refiner_id")).toString(), request.refinerId);
+    QCOMPARE(params.value(QStringLiteral("refiner_cache_dir")).toString(), request.refinerCacheDir);
 }
 
 void SmartSelectCoreTest::selectionMaskLoadNpyAcceptsUint8Mask()
 {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QByteArray payload("\x00\xff\x00\x00\xff\xff", 6);
+    const QByteArray payload("\x00\x80\x00\x00\x40\xff", 6);
     const QString path = writeTempFile(dir, makeUint8Npy("|u1", 2, 3, payload));
 
     SelectionMask mask;
@@ -380,7 +384,7 @@ void SmartSelectCoreTest::selectionMaskLoadNpyAcceptsUint8Mask()
 
     QCOMPARE(mask.size(), QSize(3, 2));
     QCOMPARE(mask.selectedBounds(), QRect(1, 0, 2, 2));
-    QCOMPARE(mask.bytesForBounds(mask.selectedBounds()), QByteArray("\xff\x00\xff\xff", 4));
+    QCOMPARE(mask.bytesForBounds(mask.selectedBounds()), QByteArray("\x80\x00\x40\xff", 4));
 }
 
 void SmartSelectCoreTest::lassoRegionMaskRasterizesBounds()

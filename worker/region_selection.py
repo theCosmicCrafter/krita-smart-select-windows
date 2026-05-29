@@ -205,13 +205,22 @@ def _positive_points(
     points: list[tuple[float, float]] = [
         (float(round(sum_x / len(selected))), float(round(sum_y / len(selected))))
     ]
-    for fraction_x, fraction_y in ((0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)):
+    for fraction_x, fraction_y in (
+        (0.25, 0.25),
+        (0.50, 0.25),
+        (0.75, 0.25),
+        (0.25, 0.50),
+        (0.75, 0.50),
+        (0.25, 0.75),
+        (0.50, 0.75),
+        (0.75, 0.75),
+    ):
         candidate = _nearest_selected_point(selected, width, height, fraction_x, fraction_y)
         if candidate is not None:
             point = (float(candidate[0]), float(candidate[1]))
             if point not in points:
                 points.append(point)
-    return points[:5]
+    return points[:9]
 
 
 def _nearest_selected_point(
@@ -239,7 +248,17 @@ def _negative_points(
     y0 = y
     x1 = x + bbox_w - 1
     y1 = y + bbox_h - 1
-    candidates = (
+    inner_candidates = (
+        (x0, y0),
+        ((x0 + x1) // 2, y0),
+        (x1, y0),
+        (x0, (y0 + y1) // 2),
+        (x1, (y0 + y1) // 2),
+        (x0, y1),
+        ((x0 + x1) // 2, y1),
+        (x1, y1),
+    )
+    outer_candidates = (
         (x0 - 8, y0 - 8),
         ((x0 + x1) // 2, y0 - 8),
         (x1 + 8, y0 - 8),
@@ -250,7 +269,17 @@ def _negative_points(
         (x1 + 8, y1 + 8),
     )
     points: list[tuple[float, float]] = []
-    for candidate_x, candidate_y in candidates:
+    selected = _selected_points(region_mask, alpha_mask, width, height)
+    for candidate_x, candidate_y in inner_candidates:
+        candidate = _nearest_selected_point(
+            selected, width, height, candidate_x / max(1, width), candidate_y / max(1, height)
+        )
+        if candidate is None:
+            continue
+        point = (float(candidate[0]), float(candidate[1]))
+        if point not in points:
+            points.append(point)
+    for candidate_x, candidate_y in outer_candidates:
         px = max(0, min(width - 1, candidate_x))
         py = max(0, min(height - 1, candidate_y))
         index = py * width + px
@@ -259,4 +288,17 @@ def _negative_points(
         point = (float(px), float(py))
         if point not in points:
             points.append(point)
-    return points[:8]
+    return points[:12]
+
+
+def _selected_points(
+    region_mask: bytes, alpha_mask: bytes, width: int, height: int
+) -> list[tuple[int, int]]:
+    points: list[tuple[int, int]] = []
+    for y in range(height):
+        row_offset = y * width
+        for x in range(width):
+            index = row_offset + x
+            if region_mask[index] > 0 and alpha_mask[index] > 0:
+                points.append((x, y))
+    return points

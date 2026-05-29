@@ -15,6 +15,8 @@ entrypoint и указателем на актуальные документы.
 - Worker transport: `QProcess` + stdio NDJSON.
 - Основной UX direction: lasso/region-prompted Smart Select, без
   click-to-select по full-image prepared сегментам.
+- Current quality path: SAM2.1 Large recall prior + MAM SAM ViT-H soft alpha
+  refinement.
 
 ## Документация
 

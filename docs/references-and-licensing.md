@@ -43,6 +43,17 @@ box/point/prompt inputs tend to produce more controllable masks than one
 full-image automatic segmentation pass. Krita Smart Select uses that direction
 for the MVP lasso workflow, while keeping implementation native to Krita.
 
+Matting-Anything is the current alpha refinement reference:
+
+- project: `SHI-Labs/Matting-Anything`;
+- source ref: `eb01e1c1f0016e2a4d00615b115f3b5ddcd031e4`;
+- product path: MAM SAM ViT-H (`mam_sam_vith`);
+- refiner role: consume the recall-oriented SAM2 prior and return soft alpha.
+
+The plugin must preserve attribution for Matting-Anything and its bundled
+Segment Anything dependency before public release. MAM is not vendored into the
+plugin source tree; it is cloned into the managed runtime source cache.
+
 ## Attribution
 
 The project must include correct license notices and attribution for any reused

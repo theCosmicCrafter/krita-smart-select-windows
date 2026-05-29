@@ -21,17 +21,28 @@
 - Worker transport: `QProcess` + stdio NDJSON.
 - Large data transport: temporary files, not JSON.
 - Segment map contract: NumPy `.npy`, dtype `<u2`, shape `[height, width]`,
-  value `0` = background/no segment. Lasso MVP may also return a single
-  `uint8` selection mask.
+  value `0` = background/no segment.
+- Lasso selection mask contract: NumPy `.npy`, dtype `|u1`, shape
+  `[height, width]`, values `0..255` are soft selection alpha and must not be
+  binarized in C++.
 - Runtime cache for MVP: in-memory only.
 - Current default real model: `sam2.1_hiera_large`.
 - Real model target: SAM2/SAM2.1 PyTorch, curated models only.
 - Current MVP inference path uses SAM2.1 Large lasso/region-prompted selection.
+- Current refinement path uses MAM SAM ViT-H (`mam_sam_vith`) on top of a
+  trimap generated from the recall-oriented SAM2 prior. MAM may refine only the
+  trimap unknown band; the eroded core stays definite foreground, and output is
+  rejected if it grows or shrinks too far from the SAM prior.
+- Worker builds a recall-oriented SAM prior from multiple prompt variants and
+  compatible candidates; do not treat one highest-score SAM mask as final when
+  improving quality.
 - Current MVP product direction is lasso/region-prompted selection, not
   click-to-select from full-image prepared masks.
+- Lasso completion should preserve native Krita selection behavior, including
+  click-outside deselect through Krita selection helper semantics.
 - Runtime venv/cache is managed automatically under Krita user data, not inside
   plugin source.
-- Current algorithm version: `sam2.1-lasso-selection-hard-v1`.
+- Current algorithm version: `sam2.1-lasso-trimap-mam-v1`.
 
 ## Не Переоткрывать Без Причины
 
@@ -43,6 +54,8 @@
 - Do not install PyTorch/SAM2 into the plugin source tree.
 - Do not reintroduce click-to-select full-image hover as the primary MVP path
   unless the product decision is explicitly reopened.
+- Do not silently fall back from MAM ViT-H to MAM ViT-B in the product path.
+- Do not binarize soft alpha selection masks before Krita selection apply.
 - Do not add GUI automation as an MVP requirement.
 
 ## Typing And Tests

@@ -194,6 +194,15 @@ void WorkerClient::handleMessage(const QJsonObject& message)
                             QJsonDocument(resultObject.value(QStringLiteral("runtime")).toObject())
                                 .toJson(QJsonDocument::Compact)) } });
         }
+        if (resultObject.contains(QStringLiteral("refiner"))) {
+            logSmartSelectEvent(SmartSelectLogLevel::Info,
+                QStringLiteral("inference.result.refiner"),
+                { { QStringLiteral("job.id"), id },
+                    { QStringLiteral("refiner.payload"),
+                        QString::fromUtf8(
+                            QJsonDocument(resultObject.value(QStringLiteral("refiner")).toObject())
+                                .toJson(QJsonDocument::Compact)) } });
+        }
         const QString selectionMaskPath
             = resultObject.value(QStringLiteral("selection_mask_path")).toString();
         if (!selectionMaskPath.isEmpty()) {

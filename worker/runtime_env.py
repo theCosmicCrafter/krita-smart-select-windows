@@ -14,6 +14,8 @@ from typing import Literal
 from job_runner import JobContext
 from observability import log_event
 from runtime_manifest import (
+    MAM_SOURCE_REF,
+    MAM_SOURCE_URL,
     PYTHON_PACKAGES,
     RUNTIME_PYTHON_VERSION,
     RUNTIME_VERSION,
@@ -50,6 +52,10 @@ class RuntimeValidationError(RuntimeEnvError):
     pass
 
 
+class RefinerRuntimeValidationError(RuntimeEnvError):
+    pass
+
+
 @dataclass(frozen=True)
 class RuntimeStatus:
     state: RuntimeState
@@ -72,6 +78,12 @@ class RuntimeReady:
     cuda_available: bool
     cuda_home: str | None
     sam2_cuda_extension: bool
+
+
+@dataclass(frozen=True)
+class MamSourceReady:
+    source_root: Path
+    source_ref: str
 
 
 def _required_python_major_minor() -> tuple[int, int]:
@@ -178,12 +190,60 @@ def ensure_runtime(
     return ready
 
 
+def ensure_mam_source(
+    runtime_ready: RuntimeReady,
+    progress: ProgressCallback,
+    context: JobContext | None = None,
+) -> MamSourceReady:
+    source_root = runtime_ready.root / "sources" / "matting-anything" / MAM_SOURCE_REF
+    if _mam_source_ready(source_root):
+        return MamSourceReady(source_root=source_root, source_ref=MAM_SOURCE_REF)
+
+    progress("validating_runtime", None, {"runtime.source": "matting-anything"})
+    _check_cancelled(context)
+    source_root.parent.mkdir(parents=True, exist_ok=True)
+    if source_root.exists():
+        shutil.rmtree(source_root)
+    git = shutil.which("git")
+    if git is None:
+        raise RefinerRuntimeValidationError("edge refiner runtime validation failed")
+    log_event(
+        "runtime.mam_source.fetch.start",
+        component="runtime_env",
+        **{"runtime.sam2.ref": MAM_SOURCE_REF},
+    )
+    _run_process([git, "clone", "--no-checkout", MAM_SOURCE_URL, str(source_root)], {}, context)
+    _run_process([git, "-C", str(source_root), "checkout", MAM_SOURCE_REF], {}, context)
+    if not _mam_source_ready(source_root):
+        raise RefinerRuntimeValidationError("edge refiner runtime validation failed")
+    log_event(
+        "runtime.mam_source.fetch.result",
+        component="runtime_env",
+        **{"runtime.cache.state": "ready", "runtime.sam2.ref": MAM_SOURCE_REF},
+    )
+    return MamSourceReady(source_root=source_root, source_ref=MAM_SOURCE_REF)
+
+
 def _is_plugin_source_path(root: Path) -> bool:
     try:
         worker_dir = Path(__file__).resolve().parent
         return root.resolve().is_relative_to(worker_dir.parent.resolve())
     except OSError:
         return True
+
+
+def _mam_source_ready(source_root: Path) -> bool:
+    if not (source_root / "networks").is_dir():
+        return False
+    if not (source_root / "segment-anything" / "segment_anything").is_dir():
+        return False
+    completed = subprocess.run(
+        ["git", "-C", str(source_root), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode == 0 and completed.stdout.strip() == MAM_SOURCE_REF
 
 
 def _check_cancelled(context: JobContext | None) -> None:

@@ -70,11 +70,12 @@ sam2.1-auto-mask-quality-v1
 Current lasso MVP algorithm version:
 
 ```text
-sam2.1-lasso-selection-hard-v1
+sam2.1-lasso-trimap-mam-v1
 ```
 
-Переход на lasso workflow намеренно инвалидирует in-memory cache, созданный
-full-image automatic mask stage.
+Переход на trimap-constrained MAM alpha refinement намеренно инвалидирует
+assumptions предыдущего hard-mask/MAM lasso stage. Runtime/model/refiner
+checkpoint caches при этом остаются переиспользуемыми.
 
 ## Follow-Ups
 

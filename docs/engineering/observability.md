@@ -87,9 +87,23 @@ Stable event names:
 - `sam.generate.result`
 - `sam.predict.start`
 - `sam.predict.result`
+- `selection_mask.prior.result`
 - `segment_map.result`
 - `selection_mask.result`
 - `selection_mask.fallback`
+- `trimap.result`
+- `refiner.download.start`
+- `refiner.download.result`
+- `refiner.download.failed`
+- `mam.load.start`
+- `mam.load.result`
+- `mam.refine.result`
+- `refinement.gate.result`
+- `refinement.rejected`
+- `refinement.failed`
+- `selection.debug_export.metrics`
+- `selection.debug_export.result`
+- `selection.debug_export.failed`
 - `region_input.result`
 - `temp_file.cleaned`
 - `temp_file.cleanup_failed`
@@ -199,9 +213,35 @@ C++ tool-ом. Для локального дебага можно запуст�
 SMART_SELECT_KEEP_DEBUG_FILES=1 /path/to/krita.AppImage
 ```
 
-В этом режиме логи `temp_file.kept_for_debug` и `inference.result` покажут пути
+В этом режиме логи `temp_file.kept_for_debug`, `selection.debug_export.result`
+и `inference.result` покажут пути
 к `snapshot.png`, `alpha_mask.npy`, `region_mask.npy`, `selection_mask.npy`,
 `segment_map.npy` и `segments.npz`, если эти файлы участвуют в текущем job-е.
+Worker также сохраняет debug-копии `sam_prior_mask.png`, `trimap.png`,
+`trimap_core_mask.png`, `trimap_unknown_mask.png`, `trimap_support_mask.png`,
+`mam_alpha.png`, `final_alpha.png`, `mam_added_vs_prior.png` и
+`mam_removed_vs_prior.png` для сравнения coarse prior, trimap guidance и
+refined alpha.
+
+`selection.debug_export.metrics` дополнительно пишет численные диагностические
+поля:
+
+- `selection.prior.area`
+- `selection.region.area`
+- `selection.alpha_sum`
+- `selection.soft_pixels`
+- `refinement.added_vs_prior_pixels`
+- `refinement.removed_vs_prior_pixels`
+- `refinement.outside_region_pixels`
+- `refinement.mam_full_pixels`
+- `refinement.mam_soft_pixels`
+- `refinement.rejected`
+- `trimap.core.area`
+- `trimap.support.area`
+- `trimap.unknown.area`
+
+Эти счетчики разрешены в логах, потому что они не содержат image contents,
+pixel arrays или mask bytes.
 
 `segment_map.npy` можно отрендерить в PPM:
 

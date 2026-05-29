@@ -16,6 +16,7 @@ public:
     QString pythonExecutable() const;
     QString modelCacheDir() const;
     QString runtimeCacheDir() const;
+    QString refinerCacheDir() const;
 
 private:
     SmartSelectRuntimeConfig() = default;

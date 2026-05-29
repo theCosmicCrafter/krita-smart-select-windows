@@ -14,8 +14,11 @@ cd "$ROOT_DIR"
 "$PYTHON" -m py_compile \
   worker/model_cache.py \
   worker/model_registry.py \
+  worker/refiner_cache.py \
+  worker/refiner_registry.py \
   worker/image_preprocessing.py \
   worker/job_runner.py \
+  worker/mam_refiner.py \
   worker/runtime_env.py \
   worker/runtime_diagnostics.py \
   worker/runtime_manifest.py \

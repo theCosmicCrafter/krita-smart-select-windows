@@ -26,11 +26,11 @@ canvas Krita: грубо задаёт область интереса обычн
    задаёт прямоугольную область.
 3. Плагин экспортирует snapshot/crop этой области с небольшим padding и
    передаёт worker-у region prompt.
-4. Worker запускает SAM2.1 Large на ограниченной области, строит одну или
-   несколько candidate masks и выбирает лучший результат для заданной области.
-5. Пока сегментация выполняется, Krita остаётся отзывчивой, а tool показывает
+4. Worker запускает SAM2.1 Large на ограниченной области и строит
+   recall-oriented SAM prior.
+5. Worker уточняет prior через MAM SAM ViT-H и получает soft alpha mask.
+6. Пока сегментация выполняется, Krita остаётся отзывчивой, а tool показывает
    progress/loader в canvas/tool options.
-6. Результат подсвечивается на canvas как preview.
 7. Tool применяет mask как выделение Krita для завершённой lasso-области.
 8. Клавиши-модификаторы должны следовать нативному поведению selection tools в
    Krita.
@@ -56,7 +56,8 @@ canvas Krita: грубо задаёт область интереса обычн
 - flattened projection всех видимых слоёв;
 - lasso/freehand region input на canvas;
 - SAM2.1 Large segmentation по ограниченной области;
-- preview результата на canvas;
+- MAM-H alpha refinement поверх SAM prior;
+- soft alpha selection mask;
 - apply-to-selection;
 - selection modifiers по нативным conventions Krita;
 - worker-backed inference pipeline;
@@ -75,6 +76,7 @@ automatic masks считаются отдельным режимом/follow-up, 
   сегмента.
 - Full-image prepared hover/click mode для быстрых выборов без lasso.
 - Candidate mask debug export для анализа качества SAM2 и постобработки.
+- Preview/confirm flow для refined alpha перед применением.
 - Click-to-select сегменты из prepared full-image карты.
 
 ## Non-Goals Первой Версии
