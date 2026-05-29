@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import gc
 import importlib
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,59 @@ class BiRefNetResult:
 
 
 _MODEL_CACHE: dict[tuple[str, str, str], Any] = {}
+
+
+def release_runtime_memory() -> None:
+    model_count = len(_MODEL_CACHE)
+    torch: Any | None = None
+    cuda_available = False
+    allocated_before: int | None = None
+    reserved_before: int | None = None
+    allocated_after: int | None = None
+    reserved_after: int | None = None
+
+    try:
+        torch = importlib.import_module("torch")
+        cuda_available = bool(torch.cuda.is_available())
+        if cuda_available:
+            allocated_before = int(torch.cuda.memory_allocated())
+            reserved_before = int(torch.cuda.memory_reserved())
+    except Exception:
+        torch = None
+
+    models = list(_MODEL_CACHE.values())
+    _MODEL_CACHE.clear()
+    for cached_model in models:
+        with suppress(Exception):
+            cached_model.to("cpu")
+    del models
+    if "cached_model" in locals():
+        del cached_model
+    gc.collect()
+
+    if torch is not None and cuda_available:
+        with suppress(Exception):
+            torch.cuda.empty_cache()
+        with suppress(Exception):
+            torch.cuda.ipc_collect()
+        try:
+            allocated_after = int(torch.cuda.memory_allocated())
+            reserved_after = int(torch.cuda.memory_reserved())
+        except Exception:
+            pass
+
+    log_event(
+        "alpha_model.memory.released",
+        component="birefnet",
+        **{
+            "model.cache.entries": model_count,
+            "cuda.available": cuda_available,
+            "cuda.memory.allocated_before": allocated_before,
+            "cuda.memory.reserved_before": reserved_before,
+            "cuda.memory.allocated_after": allocated_after,
+            "cuda.memory.reserved_after": reserved_after,
+        },
+    )
 
 
 def predict_alpha(

@@ -68,6 +68,21 @@ class BiRefNetInferenceTests(unittest.TestCase):
 
         self.assertEqual(len(fake.from_pretrained_calls), 1)
 
+    def test_release_runtime_memory_clears_model_cache_and_cuda_allocator(self) -> None:
+        with self._patched_runtime(cuda_available=True) as fake:
+            spec = get_model_spec("birefnet_hr_matting")
+            birefnet_inference.predict_alpha(
+                spec, Path("/tmp/model"), self._runtime_ready(), object()
+            )
+
+            self.assertEqual(len(birefnet_inference._MODEL_CACHE), 1)
+            birefnet_inference.release_runtime_memory()
+
+        self.assertEqual(len(birefnet_inference._MODEL_CACHE), 0)
+        self.assertEqual(fake.models[0].device, "cpu")
+        self.assertEqual(fake.torch.empty_cache_calls, 1)
+        self.assertEqual(fake.torch.ipc_collect_calls, 1)
+
     def test_output_alpha_is_resized_to_crop_size_and_soft_values_preserved(self) -> None:
         with self._patched_runtime(cuda_available=False):
             result = birefnet_inference.predict_alpha(
@@ -101,6 +116,8 @@ class _RuntimePatch:
         self.raise_oom = raise_oom
         self.from_pretrained_calls: list[dict[str, Any]] = []
         self.resize_sizes: list[tuple[int, int]] = []
+        self.models: list[_FakeModel] = []
+        self.torch = _FakeTorch(cuda_available)
         self._original_import_module = birefnet_inference.importlib.import_module
 
     def __enter__(self) -> _RuntimePatch:
@@ -112,7 +129,7 @@ class _RuntimePatch:
 
     def _fake_import_module(self, name: str) -> object:
         if name == "torch":
-            return _FakeTorch(self.cuda_available)
+            return self.torch
         if name == "PIL.Image":
             return _FakeImageModule()
         if name == "numpy":
@@ -128,7 +145,9 @@ class _RuntimePatch:
                     patch.from_pretrained_calls.append(
                         {"path": path, "trust_remote_code": trust_remote_code}
                     )
-                    return _FakeModel(patch.raise_oom)
+                    model = _FakeModel(patch.raise_oom)
+                    patch.models.append(model)
+                    return model
 
             return types.SimpleNamespace(
                 AutoModelForImageSegmentation=AutoModelForImageSegmentation
@@ -140,7 +159,21 @@ class _FakeTorch:
     __version__ = "2.6.0"
 
     def __init__(self, cuda_available: bool) -> None:
-        self.cuda = types.SimpleNamespace(is_available=lambda: cuda_available)
+        self.empty_cache_calls = 0
+        self.ipc_collect_calls = 0
+        self.cuda = types.SimpleNamespace(
+            is_available=lambda: cuda_available,
+            memory_allocated=lambda: 123,
+            memory_reserved=lambda: 456,
+            empty_cache=self._empty_cache,
+            ipc_collect=self._ipc_collect,
+        )
+
+    def _empty_cache(self) -> None:
+        self.empty_cache_calls += 1
+
+    def _ipc_collect(self) -> None:
+        self.ipc_collect_calls += 1
 
     @staticmethod
     def set_float32_matmul_precision(_mode: str) -> None:
@@ -162,8 +195,10 @@ class _NoopContext:
 class _FakeModel:
     def __init__(self, raise_oom: bool) -> None:
         self.raise_oom = raise_oom
+        self.device = ""
 
-    def to(self, _device: str) -> _FakeModel:
+    def to(self, device: str) -> _FakeModel:
+        self.device = device
         return self
 
     def eval(self) -> _FakeModel:

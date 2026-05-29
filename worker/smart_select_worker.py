@@ -438,7 +438,10 @@ def handle_diagnostics(job_id: int, params: JsonObject) -> None:
 def dispatch_job(context: JobContext, params: Mapping[str, Any]) -> None:
     method = params.get("_method")
     if method == "prepare_selection":
-        handle_prepare_selection(context.job_id, params, context)
+        try:
+            handle_prepare_selection(context.job_id, params, context)
+        finally:
+            birefnet_inference.release_runtime_memory()
         return
     emit_error(context.job_id, "ProtocolError", "unknown method")
 

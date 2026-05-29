@@ -116,6 +116,7 @@ Worker events:
 - `alpha_model.predict.start`
 - `alpha_model.predict.result`
 - `alpha_model.predict.failed`
+- `alpha_model.memory.released`
 - `alpha_mask.result`
 - `selection.debug_export.result`
 - `selection.debug_export.failed`

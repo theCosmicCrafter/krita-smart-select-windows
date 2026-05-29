@@ -166,6 +166,31 @@ class SmartSelectWorkerTests(unittest.TestCase):
 
         self.assertFalse(any("result" in message for message in self.messages))
 
+    def test_dispatch_releases_birefnet_memory_after_selection_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            release_calls = 0
+            original_release = smart_select_worker.birefnet_inference.release_runtime_memory
+
+            def fake_release() -> None:
+                nonlocal release_calls
+                release_calls += 1
+
+            try:
+                smart_select_worker.birefnet_inference.release_runtime_memory = fake_release
+                self._with_fake_pipeline(
+                    temp,
+                    lambda: smart_select_worker.dispatch_job(
+                        self._context(),
+                        {"_method": "prepare_selection", **self._params(temp)},
+                    ),
+                )
+            finally:
+                smart_select_worker.birefnet_inference.release_runtime_memory = original_release
+
+        self.assertEqual(release_calls, 1)
+        self.assertIn("result", self.messages[-1])
+
     def test_debug_export_writes_only_birefnet_debug_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

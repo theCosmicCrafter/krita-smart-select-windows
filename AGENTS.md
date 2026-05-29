@@ -34,6 +34,9 @@
 - Worker clips model output to `lasso_region & document_alpha`.
 - Runtime venv/cache is managed automatically under Krita user data, not inside
   plugin source.
+- The worker keeps disk caches, but unloads the CUDA BiRefNet model and clears
+  PyTorch CUDA allocator cache after each lasso job to avoid VRAM buildup in
+  Krita.
 - `trust_remote_code=True` is allowed only for the pinned curated BiRefNet repo
   and revision recorded in `docs/models.md`.
 - Lasso completion should preserve native Krita selection behavior, including
