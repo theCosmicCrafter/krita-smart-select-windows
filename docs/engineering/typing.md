@@ -82,14 +82,14 @@ PYTHON=.venv/bin/python ./scripts/test-code.sh
 Только Python formatting/linting:
 
 ```bash
-PYTHON=.venv/bin/python .venv/bin/python -m ruff format --check python worker tests
-PYTHON=.venv/bin/python .venv/bin/python -m ruff check python worker tests
+.venv/bin/python -m ruff format --check python worker tests
+.venv/bin/python -m ruff check python worker tests
 ```
 
 Только mypy:
 
 ```bash
-PYTHON=.venv/bin/python .venv/bin/python -m mypy
+.venv/bin/python -m mypy
 ```
 
 ## Current Status
@@ -98,19 +98,4 @@ PYTHON=.venv/bin/python .venv/bin/python -m mypy
 - Krita API is represented by minimal local stubs.
 - C++ core has compile-time type checking and QtTest coverage.
 
-## Formatting And Linting
-
-Python formatting/linting uses Ruff:
-
-- config: `pyproject.toml`;
-- formatter: `ruff format`;
-- linter: `ruff check`;
-- default checked paths: `python`, `worker`, `tests`.
-
-C++ formatting uses `.clang-format`.
-
-Rules:
-
-- Do not mass-format imported or unrelated Krita code.
-- Prefer formatting only files touched in the current change.
-- `clang-format` is the formatting tool; `clang-tidy` is not required for MVP.
+Formatting and linting policy lives in [code-style.md](code-style.md).

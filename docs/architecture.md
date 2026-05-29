@@ -19,7 +19,7 @@ C++ часть отвечает за:
 - native lasso/freehand input;
 - selection modifier behavior;
 - flattened RGB snapshot export;
-- document alpha and lasso region mask export;
+- document alpha and selected-region mask export;
 - applying returned `selection_mask.npy` as a Krita selection;
 - stale-result protection when tool, image or document changes.
 
@@ -31,7 +31,7 @@ Python часть отвечает за:
 - model download/cache verification;
 - managed runtime bootstrap;
 - BiRefNet alpha inference;
-- clipping alpha to `lasso_region & document_alpha`.
+- clipping alpha to `selection_region & document_alpha`.
 
 The boundary is intentionally small: C++ writes temp files and sends paths,
 worker returns one `selection_mask.npy` plus metadata, C++ reads the mask into
@@ -44,11 +44,10 @@ The canvas/tool layer is native C++.
 - Activating Smart Select does not start inference.
 - Lasso completion edits the current Krita selection using native
   replace/add/subtract/intersect behavior.
-- The worker starts only when the user presses `Select object with AI`; C++ exports
-  the current selection as the region mask.
+- The worker starts only when the user presses `Select object with AI`; C++
+  exports the current selection as the region mask.
 - During worker execution Tool Options shows the current stage and cancel.
 - Result is applied automatically as a native Krita selection.
-- There is no full-image hover/click segment selection in the MVP path.
 
 ## Selection Behavior
 
@@ -57,10 +56,10 @@ Smart Select should follow native Krita selection conventions:
 - default lasso completion replaces selection;
 - Shift adds;
 - Alt/Ctrl actions follow Krita `SelectionAction`;
-- `Select object with AI` refines the current selection, so users can edit the region
-  and rerun without switching tools;
-- click outside current selection should deselect through native Krita selection
-  helper semantics when possible;
+- `Select object with AI` refines the current selection, so users can edit the
+  region and rerun without switching tools;
+- click outside current selection should clear the selection through native
+  Krita selection helper semantics when possible;
 - Grow, Feather and Anti-aliasing are standard post-selection options.
 
 ## Preparing UI Stages
@@ -82,39 +81,11 @@ Current worker stages:
 If the user switches tool, closes the image or cancels, C++ ignores stale late
 results.
 
-## Packaging Target
+## Platform Target
 
 - Linux.
 - Krita 5.3.1.
 - Native C++ module/library.
 - Python extension as loader wrapper.
 
-Cross-version Krita compatibility is not a first-MVP goal.
-
-## Current Implementation Status
-
-Implemented:
-
-- native Smart Select tool registration;
-- native lasso/freehand Smart Select input;
-- click-outside deselect behavior through Krita selection helper;
-- flattened RGB snapshot and alpha mask export;
-- lasso region mask export;
-- worker-backed `prepare_selection` through `QProcess`;
-- managed BiRefNet runtime venv/cache;
-- pinned BiRefNet HR Matting model registry and Hugging Face snapshot cache;
-- soft `uint8` alpha selection mask result;
-- C++ soft alpha preservation in Krita selection apply;
-- Tool Options progress/cancel/status;
-- OTel-compatible structured logs;
-- opt-in debug export for BiRefNet alpha;
-- typed Python worker tests and C++ core tests.
-
-Not implemented:
-
-- model picker;
-- alternative model backends;
-- prompt point editing;
-- preview/confirm flow;
-- persistent logs and support dialog;
-- GUI automation.
+Cross-version Krita compatibility is handled as an explicit release decision.

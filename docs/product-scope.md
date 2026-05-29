@@ -1,6 +1,6 @@
 # Product Scope
 
-## MVP Flow
+## Product Flow
 
 1. User selects Smart Select.
 2. User draws or edits a normal Krita selection with Smart Select lasso.
@@ -20,18 +20,6 @@
 - Cancel/stale-result safety.
 - OTel-compatible local logs.
 - Debug exports for alpha diagnosis.
-
-## Out Of Scope
-
-- SAM2/MAM/trimap path.
-- Full-image prepared hover/click segmentation.
-- `mock` model id.
-- Model picker.
-- Positive/negative point UI.
-- Preview/confirm flow.
-- Disk cache for selection results.
-- GUI automation.
-- Network telemetry.
 
 ## Selection Options
 

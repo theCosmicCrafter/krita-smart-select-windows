@@ -10,12 +10,11 @@ Observability должна помогать:
 - понять, где job остановился;
 - отличить runtime/model setup от inference failure;
 - диагностировать CUDA/CPU поведение;
-- получить короткий безопасный Diagnostic Report в будущем;
 - не логировать image contents, pixel data, mask bytes, tokens or secrets.
 
 ## OpenTelemetry Compatibility
 
-MVP logs are OpenTelemetry-compatible by schema, but the plugin does not use an
+Logs are OpenTelemetry-compatible by schema, but the plugin does not use an
 OpenTelemetry SDK, OTLP exporter or network telemetry.
 
 New logs must use:
@@ -64,8 +63,8 @@ Preferred dotted fields:
 - `error.reason`
 
 The current transport remains human-readable key-value text through `qInfo`,
-`qWarning` and worker `stderr`. Persistent JSON Lines logs and OTLP export are
-future work and must be explicit opt-in.
+`qWarning` and worker `stderr`. Persistent JSON Lines logs or OTLP export must
+be explicit opt-in product decisions.
 
 ## Stable Events
 
@@ -153,10 +152,5 @@ Logs and future Diagnostic Reports must not include:
 - environment variables;
 - tokens or secrets.
 
-Future user-facing Diagnostic Report should redact home/document paths where
-possible. Developer logs may include temporary paths while debugging.
-
-## Diagnostic Report
-
-Diagnostic Report is future work. It should include concise system/runtime/model
-state and recent structured events, not raw images or mask bytes.
+User-facing diagnostic output should redact home/document paths where possible.
+Developer logs may include temporary paths while debugging.

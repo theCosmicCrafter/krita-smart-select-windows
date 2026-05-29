@@ -1,16 +1,13 @@
 # Models
 
-## Current Product Model
+## Product Model
 
-Smart Select currently uses one plug-and-play foreground alpha model:
+Smart Select uses one plug-and-play foreground alpha model:
 
 - local id: `birefnet_hr_matting`
 - title: BiRefNet HR Matting
 - role: direct alpha extraction from a lasso crop
 - algorithm version: `birefnet-hr-matting-lasso-v1`
-
-SAM2, MAM, trimap refinement, BEN2, RMBG and SAM3 are research follow-ups, not
-active implementation paths.
 
 ## BiRefNet HR Matting
 
@@ -51,16 +48,4 @@ The cache is marked verified only after exact file-size checks pass for
 ## Security Rule
 
 `trust_remote_code=True` is allowed only for the pinned curated BiRefNet repo
-and revision above. Do not expose arbitrary user-provided model repos in the MVP
-path.
-
-## Follow-Ups
-
-Potential future research:
-
-- model picker;
-- BEN2;
-- RMBG;
-- SAM3;
-- vendor/audit BiRefNet custom code instead of dynamic HF custom code;
-- persistent model cache management UI.
+and revision above. Do not expose arbitrary user-provided model repos.

@@ -30,9 +30,6 @@ Fallback:
   runtime/
 ```
 
-Old SAM2/MAM caches are unused after the BiRefNet pivot and can be removed
-manually after validation. The worker does not delete them automatically.
-
 ## Runtime Version
 
 Current runtime:
@@ -60,8 +57,6 @@ Runtime installs:
 - `scipy`;
 - `scikit-image`;
 - `accelerate`.
-
-No SAM2 source clone, MAM source clone or custom CUDA extension is used.
 
 ## Validation
 

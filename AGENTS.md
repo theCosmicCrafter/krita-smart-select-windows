@@ -4,18 +4,19 @@
 
 ## Сначала Читать
 
-- `docs/README.md` - карта документации.
-- `DESIGN.md` - короткий индекс, не основной дизайн-документ.
+- `README.md` - установка, запуск, dev setup и карта документации.
 - `docs/architecture.md` - C++/Python split и canvas tool rules.
 - `docs/worker-protocol.md` - NDJSON protocol и selection mask contract.
 - `docs/runtime-env.md` - managed BiRefNet venv/cache policy.
 - `docs/engineering/typing.md` - mypy/stubs policy.
 - `docs/engineering/testing.md` - текущие тесты и команды.
+- `docs/engineering/code-style.md` - Ruff, clang-format и стиль кода.
 - `docs/engineering/observability.md` - logging/diagnostics/support rules.
+- `docs/licensing.md` - лицензирование кода, модели и релизных пакетов.
 
 ## Базовые Решения
 
-- MVP target: Linux + Krita 5.3.1.
+- Target: Linux + Krita 5.3.1.
 - Canvas/tool layer: native C++ Krita tool.
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
@@ -24,11 +25,8 @@
   object with AI` action.
 - Current model: `birefnet_hr_matting` (`ZhengPeng7/BiRefNet_HR-matting`).
 - Current algorithm version: `birefnet-hr-matting-lasso-v1`.
-- BiRefNet is used as a direct alpha extraction model, not as a SAM prior or
-  refiner.
+- BiRefNet is used as a direct alpha extraction model.
 - `prepare_selection` is the only inference protocol path.
-- `prepare_segments`, full-image hover/click segment selection, `mock`,
-  SAM2/MAM/trimap and refiner protocol fields are removed from the MVP path.
 - Lasso selection mask contract: NumPy `.npy`, dtype `|u1`, shape
   `[height, width]`, values `0..255` are soft selection alpha and must not be
   binarized in C++.
@@ -53,16 +51,10 @@
 
 - Do not implement canvas overlay as a floating QWidget or Python-only overlay.
 - Do not pass masks/pixel arrays through JSON.
-- Do not reintroduce SAM2, MAM, trimap, GGUF/custom models, SAM3, BEN2 or RMBG
-  into MVP scope without an explicit product decision.
-- Do not reintroduce click-to-select full-image hover as the primary MVP path
-  unless the product decision is explicitly reopened.
-- Do not add a `mock` model id or legacy/dev worker path.
 - Do not install PyTorch or model dependencies into the plugin source tree.
 - Do not binarize soft alpha selection masks before Krita selection apply.
 - Do not add hidden final grow; Grow/Feather/Anti-aliasing remain native Krita
   post-selection options.
-- Do not add GUI automation as an MVP requirement.
 
 ## Typing And Tests
 
@@ -97,7 +89,7 @@ BUILD_JOBS=20 ./scripts/build-krita-5.3.1.sh
 ## Observability Rules
 
 - Use stable structured event names.
-- Logs must be OpenTelemetry-compatible by schema, but the MVP must not add an
+- Logs must be OpenTelemetry-compatible by schema, but the plugin must not add an
   OpenTelemetry SDK, OTLP exporter or network telemetry without an explicit
   product decision.
 - Use `event.name`, not `event`, for structured log records.
@@ -110,8 +102,7 @@ BUILD_JOBS=20 ./scripts/build-krita-5.3.1.sh
 
 ## Documentation Rule
 
-Stable decisions belong in `docs/`, not in long comments or a revived
-`DESIGN.md`.
+Stable decisions belong in `docs/`, not in long comments.
 
 When changing architecture, protocol, typing, testing or support behavior,
 update the relevant doc in the same change.

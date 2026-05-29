@@ -2,7 +2,7 @@
 
 ## Transport
 
-MVP использует `QProcess` + stdio NDJSON как control channel.
+Smart Select uses `QProcess` + stdio NDJSON as the worker control channel.
 
 - stdin worker-а принимает one-line JSON requests.
 - stdout worker-а отдаёт one-line JSON progress/results/errors.
@@ -27,7 +27,7 @@ After successful read, C++ may delete temporary files.
 
 ### `prepare_selection`
 
-The only inference request in the MVP path:
+The inference request:
 
 ```json
 {"id":1,"method":"prepare_selection","params":{"image_path":"/tmp/input.png","alpha_mask_path":"/tmp/alpha_mask.npy","region_mask_path":"/tmp/region_mask.npy","region_bbox":[100,120,420,360],"model_id":"birefnet_hr_matting","algorithm_version":"birefnet-hr-matting-lasso-v1","fingerprint":"...","canvas_width":1024,"canvas_height":768,"model_cache_dir":"/home/user/.local/share/krita/smart_select/models","runtime_cache_dir":"/home/user/.local/share/krita/smart_select/runtime"}}
@@ -48,15 +48,6 @@ Parameters:
 - `canvas_width`, `canvas_height`: full canvas size in pixels.
 - `model_cache_dir`: writable model snapshot cache.
 - `runtime_cache_dir`: writable managed runtime cache.
-
-Removed protocol paths:
-
-- `prepare_segments`;
-- `mock` model id;
-- `refiner_id`;
-- `refiner_cache_dir`;
-- `segment_map_path`;
-- `segments_path`.
 
 ### `diagnostics`
 

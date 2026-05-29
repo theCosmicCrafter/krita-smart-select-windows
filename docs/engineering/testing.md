@@ -61,13 +61,14 @@ It is not called by `scripts/test-code.sh`.
 4. Select Smart Select.
 5. Confirm no inference starts on activation.
 6. Draw lasso around a subject.
-7. Confirm Tool Options shows alpha runtime/model stages.
-8. Confirm result is applied automatically.
-9. Confirm selection stays inside lasso.
-10. Confirm transparent document pixels are excluded.
-11. Confirm Shift/add and other native selection actions still work.
-12. Confirm click outside current selection deselects when native Krita behavior allows it.
-13. Confirm cancel during setup does not crash.
-14. Confirm late inference result is ignored after cancel/tool switch.
-15. Confirm logs include `selection.start`, `alpha_model.predict.result`,
+7. Edit the selected region with add/subtract/intersect actions.
+8. Press `Select object with AI`.
+9. Confirm Tool Options shows alpha runtime/model stages.
+10. Confirm result is applied automatically.
+11. Confirm selection stays inside the selected region.
+12. Confirm transparent document pixels are excluded.
+13. Confirm click outside current selection deselects when native Krita behavior allows it.
+14. Confirm cancel during setup does not crash.
+15. Confirm late inference result is ignored after cancel/tool switch.
+16. Confirm logs include `selection.start`, `alpha_model.predict.result`,
     `alpha_mask.result` and `selection.result`.
