@@ -19,6 +19,30 @@ a Krita selection.
 - Local structured logs with OpenTelemetry-compatible field names.
 - Debug image export for local diagnosis when explicitly enabled.
 
+## Examples
+
+| Before | After |
+| --- | --- |
+| <img src="docs/assets/examples/glasses-before.png" alt="Lasso region around a man wearing glasses" width="360"> | <img src="docs/assets/examples/glasses-after.png" alt="AI selection result preserving glasses transparency" width="360"> |
+
+Smart Select preserves transparent surfaces and subtle see-through details, such
+as eyeglass lenses.
+
+| Before | After |
+| --- | --- |
+| <img src="docs/assets/examples/hair-before.png" alt="Lasso region around a woman with long hair" width="360"> | <img src="docs/assets/examples/hair-after.png" alt="AI selection result preserving hair detail" width="360"> |
+
+Soft alpha selection keeps fine hair detail instead of reducing the subject to a
+hard binary cutout.
+
+| Before | After |
+| --- | --- |
+| <img src="docs/assets/examples/laptop-before.png" alt="Lasso region around a laptop" width="360"> | <img src="docs/assets/examples/laptop-after.png" alt="AI selection result for the laptop" width="360"> |
+
+| Before | After |
+| --- | --- |
+| <img src="docs/assets/examples/car-before.png" alt="Lasso region around a car" width="420"> | <img src="docs/assets/examples/car-after.png" alt="AI selection result for the car" width="420"> |
+
 ## Requirements
 
 For users:
