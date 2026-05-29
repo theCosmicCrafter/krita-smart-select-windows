@@ -13,10 +13,9 @@ entrypoint и указателем на актуальные документы.
 - Krita 5.3.1.
 - Native C++ canvas tool + Python loader/worker.
 - Worker transport: `QProcess` + stdio NDJSON.
-- Основной UX direction: lasso/region-prompted Smart Select, без
-  click-to-select по full-image prepared сегментам.
-- Current quality path: SAM2.1 Large recall prior + MAM SAM ViT-H soft alpha
-  refinement.
+- Основной UX direction: lasso-driven Smart Select, без click-to-select по
+  full-image prepared сегментам.
+- Current quality path: BiRefNet HR Matting direct soft alpha extraction.
 
 ## Документация
 

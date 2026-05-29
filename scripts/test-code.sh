@@ -12,23 +12,18 @@ TOOLS_CMAKE="$KRITA_SRC/plugins/tools/CMakeLists.txt"
 cd "$ROOT_DIR"
 
 "$PYTHON" -m py_compile \
-  worker/model_cache.py \
-  worker/model_registry.py \
-  worker/refiner_cache.py \
-  worker/refiner_registry.py \
-  worker/image_preprocessing.py \
+  worker/alpha_model_cache.py \
+  worker/alpha_model_registry.py \
+  worker/alpha_selection_builder.py \
+  worker/birefnet_inference.py \
   worker/job_runner.py \
-  worker/mam_refiner.py \
   worker/runtime_env.py \
   worker/runtime_diagnostics.py \
   worker/runtime_manifest.py \
-  worker/sam2_inference.py \
-  worker/segment_map_builder.py \
   worker/smart_select_worker.py \
   python/smart_select/extension.py \
   python/smart_select/worker_launcher.py \
-  python/smart_select/__init__.py \
-  scripts/render-segment-map.py
+  python/smart_select/__init__.py
 
 if ! "$PYTHON" -m mypy --version >/dev/null 2>&1; then
   cat >&2 <<'EOF'

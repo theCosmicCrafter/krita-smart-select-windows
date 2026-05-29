@@ -57,6 +57,9 @@ QJsonValue variantToJsonValue(const QVariant& value)
     if (type == QMetaType::Float || type == QMetaType::Double) {
         return value.toDouble();
     }
+    if (type == QMetaType::QString) {
+        return value.toString();
+    }
     if (value.canConvert<QStringList>()) {
         QJsonArray array;
         for (const QString& item : value.toStringList()) {
@@ -107,7 +110,7 @@ QString severityName(SmartSelectLogLevel level)
 
 } // namespace
 
-void logSmartSelectEvent(
+QString formatSmartSelectLogEvent(
     SmartSelectLogLevel level, const QString& eventName, const QVariantMap& fields)
 {
     QStringList parts;
@@ -120,5 +123,11 @@ void logSmartSelectEvent(
         parts << formatField(it.key(), it.value());
     }
 
-    writeLog(level, parts.join(QLatin1Char(' ')));
+    return parts.join(QLatin1Char(' '));
+}
+
+void logSmartSelectEvent(
+    SmartSelectLogLevel level, const QString& eventName, const QVariantMap& fields)
+{
+    writeLog(level, formatSmartSelectLogEvent(level, eventName, fields));
 }

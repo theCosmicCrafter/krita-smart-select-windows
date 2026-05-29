@@ -1,193 +1,73 @@
 # Testing
 
-## Principles
-
-Тесты должны фокусироваться на поведении, которое можно проверять вне Krita.
-
-Приоритет:
-
-- worker protocol;
-- model registry validation;
-- download/cache logic;
-- lasso/region mask rasterization;
-- selection mask generation;
-- coordinate mapping;
-- mask combining;
-- error handling and cancellation;
-- image fingerprint/cache invalidation.
-
-Krita GUI integration проверяется manual smoke в MVP. Автоматизированный GUI
-smoke не обязателен для MVP, потому что coordinate-driven UI automation для
-Krita будет хрупким и дорогим.
-
-## Test Layers
-
-### Python
-
-- `py_compile` for syntax/import sanity.
-- `mypy` for typed Python boundaries.
-- `unittest` for worker protocol and generated file contracts.
-
-### C++
-
-- QtTest for pure core modules.
-- Current target: `smartselect_core_tests`.
-
-### Manual GUI Smoke
-
-Manual smoke остаётся нужным для canvas/tool поведения:
-
-1. Enable plugin.
-2. Activate Smart Select.
-3. Draw a lasso/freehand region around an object or object part.
-4. Confirm preparing state in Tool Options.
-5. Confirm result preview appears on canvas.
-6. Confirm Krita selection is applied from the lasso-refined mask.
-7. Repeat with selection modifiers.
-8. Switch tool and reselect Smart Select.
-9. Close Krita without crash.
-
-## Current Command
+## Default Check
 
 ```bash
 PYTHON=.venv/bin/python ./scripts/test-code.sh
 ```
 
-The script runs:
+This runs:
 
-1. Python compile checks.
-2. Ruff format check.
-3. Ruff lint check.
-4. `mypy`.
-5. Python worker unit tests.
-6. C++ QtTest target build.
-7. CTest for `smartselect_core_tests`.
+- Python compile checks;
+- Ruff format check;
+- Ruff lint;
+- mypy strict;
+- Python worker unit tests;
+- C++ core tests when Krita source/build paths are available.
 
-## Opt-In Real SAM2 Smoke
+## Python Coverage
 
-The real SAM2 smoke is intentionally not part of the default suite because it
-may install PyTorch/SAM2 and download the SAM2.1 Large checkpoint:
+Current unit tests cover:
+
+- BiRefNet model registry metadata;
+- BiRefNet model cache verification and pinned snapshot download call shape;
+- runtime status/rebuild behavior;
+- runtime diagnostics without installing dependencies;
+- BiRefNet inference wrapper with fake torch/transformers/PIL modules;
+- alpha selection builder clipping and soft alpha preservation;
+- region/lasso helper behavior;
+- worker `prepare_selection` success/error/cancel paths with fake inference;
+- OTel-compatible worker log formatting.
+
+Default tests must not download the real model or install torch.
+
+## C++ Coverage
+
+Core tests cover:
+
+- snapshot fingerprint and alpha inclusion;
+- snapshot normalization;
+- `.npy` writer;
+- `PrepareSelectionRequest` serialization;
+- soft `SelectionMask` loading and alpha preservation;
+- lasso region mask rasterization.
+
+## Opt-In Real BiRefNet Smoke
+
+The real BiRefNet smoke is intentionally explicit because it may create the
+managed runtime and download the model snapshot:
 
 ```bash
-SMART_SELECT_RUN_SAM2_SMOKE=1 ./scripts/test-sam2-smoke.sh
+SMART_SELECT_RUN_BIREFNET_SMOKE=1 ./scripts/test-birefnet-smoke.sh
 ```
 
-It creates a tiny synthetic snapshot, uses the normal worker protocol, writes
-runtime/model caches under Krita user data by default and verifies that the
-worker returns a non-empty selection mask.
+It is not called by `scripts/test-code.sh`.
 
-## Opt-In Real MAM Smoke
+## Manual GUI Smoke
 
-The real MAM smoke is also opt-in because it may download SAM1 ViT-H and MAM
-ViT-H checkpoints and run GPU matting:
-
-```bash
-SMART_SELECT_RUN_MAM_SMOKE=1 ./scripts/test-mam-smoke.sh
-```
-
-It creates a tiny synthetic snapshot/lasso mask, uses the normal
-`prepare_selection` protocol and verifies that `selection_mask.npy` contains
-soft alpha values, not only `0/255`.
-
-## Current Covered Cases
-
-Python worker tests cover:
-
-- model registry default is `sam2.1_hiera_large`;
-- SAM2.1 Large registry metadata is stable;
-- model cache reuses verified files without network calls;
-- model cache downloads through `.partial` and writes `model.json`;
-- model cache resumes partial downloads when ranges are supported;
-- model cache restarts when resume is not supported;
-- model cache preserves partial files on cancellation;
-- model download failures log stable error type and short reason to stderr;
-- runtime diagnostics succeeds without torch installed;
-- runtime diagnostics reports model cache state;
-- runtime status detects ready and invalid runtime markers;
-- runtime bootstrap rejects plugin-source cache paths;
-- SAM2 inference wrapper chooses CUDA when available;
-- SAM2 inference wrapper falls back to CPU only when CUDA is unavailable;
-- CUDA OOM maps to `InferenceOutOfMemory`;
-- SAM2 generator is cached inside the worker process;
-- SAM2 predictor calls `set_image()` before `predict()`;
-- SAM2 predictor uses `multimask_output=True`;
-- image preprocessing caps inference long side at `2048`;
-- lasso region masks load as `uint8`;
-- lasso region bbox and prompt points are computed;
-- lasso selection masks are clipped to region and alpha;
-- lasso selection mask writer preserves soft alpha values;
-- low-overlap SAM candidates fall back to the lasso region;
-- candidate ranking penalizes surrounding/background masks that hug the lasso
-  boundary;
-- complementary candidates are merged into a recall-oriented SAM prior;
-- small enclosed holes inside the merged SAM prior are filled;
-- SAM prior builder can be tested separately from final alpha writer;
-- MAM refiner registry pins `mam_sam_vith` and exact checkpoint sizes;
-- MAM refiner cache verifies both SAM1 and MAM checkpoints;
-- MAM refiner cache reuses verified files without network calls;
-- MAM refiner cache preserves partial files on cancellation;
-- real `prepare_selection` with fake MAM emits refiner stages and returns a
-  soft selection mask;
-- missing refiner cache dir is rejected for real model requests;
-- SAM2 predictor adds positive-only and box-only prompt variants when generated
-  negative points are present;
-- SAM mask conversion excludes transparent alpha pixels;
-- SAM mask conversion resolves overlaps by score/stability/area priority;
-- tiny masks are dropped from segment maps;
-- fake segmentation creates 3 segments;
-- segment metadata is produced;
-- generated segment map is hit-testable;
-- `prepare_segments` emits progress events;
-- real model with fake SAM emits runtime/model/inference stages;
-- mock `prepare_selection` returns a valid `selection_mask_path`;
-- missing real model runtime dir is rejected;
-- unknown model id is rejected;
-- `diagnostics` request returns runtime info;
-- worker writes valid `.npy <u2`;
-- `.npy` shape is `[height, width]`;
-- worker reads valid `uint8` alpha masks;
-- worker rejects invalid alpha masks;
-- transparent alpha mask pixels are excluded from mock segment maps;
-- metadata is recomputed after alpha masking;
-- invalid canvas size is rejected;
-- non-object request params are rejected;
-- cancel request records cancelled job;
-- worker process accepts NDJSON request through stdin and returns result through
-  stdout.
-
-C++ tests cover:
-
-- `SegmentMap::loadNpy()` accepts valid uint16 `.npy`;
-- wrong dtype is rejected;
-- Fortran-order arrays are rejected;
-- truncated payload is rejected;
-- `segmentAt()` returns expected ids and handles out-of-bounds as background;
-- segment bounds are tight;
-- `selectionMask()` returns correct bounds and alpha bytes;
-- `exactSnapshotFingerprint()` is stable for equal RGB/alpha input;
-- fingerprint changes when RGB pixels change;
-- fingerprint changes when alpha mask changes;
-- fingerprint changes when image size changes;
-- invalid alpha mask length is rejected;
-- null image fingerprint is empty;
-- snapshot normalization composites transparent pixels over white;
-- snapshot normalization preserves alpha mask bytes;
-- fully transparent snapshots are detected;
-- `writeUint8Npy()` writes valid NumPy headers;
-- `writeUint8Npy()` rejects wrong payload sizes.
-- `prepare_segments` request serialization includes `model_cache_dir` and
-  `runtime_cache_dir`.
-- `prepare_selection` request serialization includes lasso region fields,
-  runtime/model/refiner cache dirs and `refiner_id`;
-- `SelectionMask::loadNpy()` accepts valid `uint8` `.npy`;
-- `SelectionMask::bytesForBounds()` preserves soft alpha values;
-- lasso rasterization creates a non-empty bbox and mask bytes.
-
-## Future Test Additions
-
-- Cache key invalidation tests.
-- Worker crash/error tests.
-- Selection modifier mapping tests.
-- Lasso region mask serialization tests.
-- `prepare_selection` request/result tests.
-- Coordinate mapping tests around zoom/pan where feasible.
+1. Build and install dist.
+2. Start Krita AppImage.
+3. Open a small image.
+4. Select Smart Select.
+5. Confirm no inference starts on activation.
+6. Draw lasso around a subject.
+7. Confirm Tool Options shows alpha runtime/model stages.
+8. Confirm result is applied automatically.
+9. Confirm selection stays inside lasso.
+10. Confirm transparent document pixels are excluded.
+11. Confirm Shift/add and other native selection actions still work.
+12. Confirm click outside current selection deselects when native Krita behavior allows it.
+13. Confirm cancel during setup does not crash.
+14. Confirm late inference result is ignored after cancel/tool switch.
+15. Confirm logs include `selection.start`, `alpha_model.predict.result`,
+    `alpha_mask.result` and `selection.result`.

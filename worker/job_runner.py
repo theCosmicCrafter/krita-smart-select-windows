@@ -9,13 +9,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from observability import log_event
+
 
 @dataclass
 class JobContext:
     job_id: int
+    job_type: str = "unknown"
     cancel_event: threading.Event = field(default_factory=threading.Event)
     temp_paths: list[Path] = field(default_factory=list)
-    active_process: subprocess.Popen[bytes] | None = None
+    active_process: subprocess.Popen[Any] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def is_cancelled(self) -> bool:
@@ -28,7 +31,7 @@ class JobContext:
         if process is not None and process.poll() is None:
             process.terminate()
 
-    def set_active_process(self, process: subprocess.Popen[bytes] | None) -> None:
+    def set_active_process(self, process: subprocess.Popen[Any] | None) -> None:
         with self.lock:
             self.active_process = process
 
@@ -52,7 +55,7 @@ class JobRunner:
                 self._emit_error(job_id, "WorkerBusy", "worker is busy")
                 return False
 
-            context = JobContext(job_id=job_id)
+            context = JobContext(job_id=job_id, job_type=_job_type_for_params(params))
             self._active = context
 
         thread = threading.Thread(
@@ -86,6 +89,18 @@ class JobRunner:
         try:
             self._target(context, params)
         except Exception as exc:
+            log_event(
+                "worker.job.failed",
+                severity="error",
+                component="worker",
+                **{
+                    "job.id": context.job_id,
+                    "job.type": context.job_type,
+                    "error.type": exc.__class__.__name__,
+                    "exception.type": exc.__class__.__name__,
+                    "exception.message": str(exc),
+                },
+            )
             print(traceback.format_exc(), file=sys.stderr, flush=True)
             self._emit_error(context.job_id, exc.__class__.__name__, "Smart Select worker failed")
         finally:
@@ -96,3 +111,11 @@ class JobRunner:
 
     def _clear_finished_locked(self) -> None:
         return
+
+
+def _job_type_for_params(params: Mapping[str, Any]) -> str:
+    if params.get("_method") == "prepare_selection":
+        return "lasso_selection"
+    if params.get("_method") == "diagnostics":
+        return "diagnostics"
+    return "unknown"

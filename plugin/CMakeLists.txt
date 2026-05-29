@@ -11,7 +11,6 @@ set(kritasmartselect_SOURCES
     SmartSelectTool.cpp
     LassoRegionMask.cpp
     NpyWriter.cpp
-    SegmentMap.cpp
     SelectionApply.cpp
     SelectionMask.cpp
     SmartSelectLog.cpp
@@ -48,8 +47,8 @@ if(SMART_SELECT_BUILD_TESTS)
         tests/SmartSelectCoreTest.cpp
         LassoRegionMask.cpp
         NpyWriter.cpp
-        SegmentMap.cpp
         SelectionMask.cpp
+        SmartSelectLog.cpp
         SnapshotFingerprint.cpp
         SnapshotImage.cpp
     )

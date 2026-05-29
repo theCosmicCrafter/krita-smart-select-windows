@@ -1,221 +1,66 @@
 # Models
 
-## Model Strategy
+## Current Product Model
 
-Первая версия должна сфокусироваться на **SAM2 / SAM2.1 PyTorch-моделях**.
+Smart Select currently uses one plug-and-play foreground alpha model:
 
-MVP не таргетирует:
+- local id: `birefnet_hr_matting`
+- title: BiRefNet HR Matting
+- role: direct alpha extraction from a lasso crop
+- algorithm version: `birefnet-hr-matting-lasso-v1`
 
-- GGUF-модели;
-- пользовательские кастомные модели;
-- SAM3/SAM3.1 как default или обязательный backend.
+SAM2, MAM, trimap refinement, BEN2, RMBG and SAM3 are research follow-ups, not
+active implementation paths.
 
-SAM3 может быть будущим backend, но ни одна фича первой версии не должна от
-него зависеть.
+## BiRefNet HR Matting
 
-## Initial Curated Registry Candidates
+Pinned metadata:
 
-Текущий inference registry активирует только тяжёлую default-модель:
+- Hugging Face repo: `ZhengPeng7/BiRefNet_HR-matting`
+- revision: `5d6b6f8adcb5b417c871b1d84ceaae9871355b7f`
+- license: MIT
+- `model.safetensors`: `444473596` bytes
+- `model.safetensors` ETag:
+  `"99cba4ff97616fa0e1e9b9480da68bd298ae62b4ebdc90ee3a829a939b2a7c72"`
+- `config.json`: `416` bytes
+- input resolution: `2048x2048`
+- recommended RAM: 16 GB
+- recommended VRAM: 8 GB
 
-- SAM2.1 Hiera Large (`sam2.1_hiera_large`)
+The model card says this variant is trained at `2048x2048` for higher
+resolution image matting with transparency.
 
-Лёгкие модели остаются follow-up для будущего model picker:
+## Cache
 
-- SAM2 Hiera Tiny
-- SAM2 Hiera Small
-- SAM2 Hiera Base Plus
+Worker downloads the pinned Hugging Face snapshot into:
 
-Точный список нужно проверить по официальному состоянию релизов SAM2/SAM2.1 на
-момент реализации.
-
-## Hardware Profile
-
-Hardware profile в `ModelRegistry` должен быть консервативной подсказкой для
-пользователя и support flow, а не строгим запретом запуска.
-
-Ориентировочные значения для MVP:
-
-- SAM2/SAM2.1 Hiera Tiny: RAM 8 GB, VRAM 0-4 GB, быстрый/default вариант для
-  CPU или слабого GPU.
-- SAM2/SAM2.1 Hiera Small: RAM 8-16 GB, VRAM 4 GB, хороший default для GPU.
-- SAM2/SAM2.1 Hiera Base Plus: RAM 16 GB, VRAM 6-8 GB, quality/performance
-  вариант.
-- SAM2/SAM2.1 Hiera Large: RAM 16-32 GB, VRAM 8-12 GB, quality/slow вариант.
-
-Для первого real inference этапа default выбран **SAM2.1 Hiera Large**, потому
-что нужно сразу проверять максимальное качество, а не быстрый минимальный путь.
-
-В рамках MVP активная модель используется в quality-first lasso/region-prompted
-workflow. Full-image automatic mask generation остаётся реализованным spike и
-может вернуться как быстрый режим, но не является главным quality path.
-Отдельные speed/quality presets пока не вводятся: если модель слишком тяжёлая
-для машины пользователя, пользователь должен будет выбрать более лёгкую модель
-через будущий model picker.
-
-Automatic mask generation для Base Plus и Large нужно помечать как тяжёлую
-операцию. UI может предупреждать пользователя, если изображение большое или
-выбранная модель явно не соответствует доступной памяти.
-
-## ModelRegistry Contract
-
-Метаданные моделей должны быть централизованы в `ModelRegistry`.
-
-Каждая запись модели должна содержать как минимум:
-
-- стабильный id модели;
-- отображаемое имя;
-- семейство модели;
-- URL checkpoint;
-- имя/путь config;
-- ожидаемый размер файла;
-- опциональный checksum;
-- рекомендованный объём RAM;
-- рекомендованный объём VRAM;
-- профиль качества/производительности;
-- поддерживаемые устройства;
-- заметки для отображения в настройках.
-
-Example shape:
-
-```python
-ModelSpec(
-    id="sam2.1_hiera_large",
-    title="SAM2.1 Hiera Large",
-    family="sam2.1",
-    checkpoint_url="https://huggingface.co/facebook/sam2.1-hiera-large/resolve/38e0b24f84dfe8a95d5b6cb53bc1b772cbe15dc2/sam2.1_hiera_large.pt?download=true",
-    checkpoint_filename="sam2.1_hiera_large.pt",
-    config_name="configs/sam2.1/sam2.1_hiera_l.yaml",
-    expected_bytes=898089053,
-    etag='"5a2b7e292d0cbd3cce5f410502ced3eb9b92031a7b21fcea62cb97eed73de1d3"',
-    recommended_ram_gb=32,
-    recommended_vram_gb=12,
-    profile="quality",
-    requires_download=True,
-)
+```text
+<model_cache_dir>/birefnet_hr_matting/snapshot/
 ```
 
-Окно настроек должно строиться на основе registry, а не через захардкоженные
-UI-ветки.
+Allowed files:
 
-## Download And Cache
+- `*.py`
+- `*.json`
+- `*.safetensors`
+- `README.md`
 
-Загрузка моделей должна быть устойчивой:
+The cache is marked verified only after exact file-size checks pass for
+`model.safetensors` and `config.json`.
 
-- Сначала скачивать во временный файл.
-- Поддерживать resume там, где это практически возможно.
-- Ретраить transient network failures без потери `.partial`.
-- Проверять свободное место перед продолжением загрузки.
-- Проверять размер файла и checksum, если он известен.
-- Хранить модели в пользовательских данных/config Krita, а не внутри исходников
-  плагина.
-- Показывать понятные состояния загрузки, проверки и ошибки.
-- Никогда не замораживать Krita во время загрузки.
+## Security Rule
 
-Для SAM2.1 Hiera Large используется pinned Hugging Face checkpoint:
+`trust_remote_code=True` is allowed only for the pinned curated BiRefNet repo
+and revision above. Do not expose arbitrary user-provided model repos in the MVP
+path.
 
-- URL: `https://huggingface.co/facebook/sam2.1-hiera-large/resolve/38e0b24f84dfe8a95d5b6cb53bc1b772cbe15dc2/sam2.1_hiera_large.pt?download=true`
-- expected size: `898089053` bytes
-- ETag: `"5a2b7e292d0cbd3cce5f410502ced3eb9b92031a7b21fcea62cb97eed73de1d3"`
+## Follow-Ups
 
-Официальный checksum в registry пока не используется, поэтому verification
-использует exact byte size. ETag хранится как metadata и как future input для
-более строгой проверки cache identity.
+Potential future research:
 
-## Current Implementation Status
-
-Реализованы:
-
-- typed `ModelRegistry`;
-- default model id `sam2.1_hiera_large`;
-- download/cache/verify checkpoint-а в worker process;
-- automatic SAM2 runtime bootstrap через user-level venv/cache;
-- real SAM2.1 Large predictor path для lasso/region selection;
-- conversion from SAM masks to full-canvas `uint8` selection mask;
-- runtime diagnostics foundation.
-
-Mock model id всё ещё поддерживается для быстрых тестов и development smoke.
-
-Current MVP quality path uses `SAM2ImagePredictor` with lasso-derived bbox,
-positive points and negative points. The lasso helper generates foreground
-points across the region and background points near the region boundary, similar
-to the prompt-driven SAM workflow used by InvokeAI.
-
-For quality, the worker now treats SAM output as a recall-oriented prior rather
-than a single final mask. When negative points are present, the predictor is run
-with additional prompt variants:
-
-- bbox + all generated points;
-- bbox + positive points only;
-- bbox only.
-
-The positive-only and box-only variants are down-weighted, but their candidates
-can still contribute missing object parts. Returned candidates are ranked by
-model score, region coverage, candidate precision, prompt-point hits and
-lasso-boundary contact. Compatible candidates are merged into a coarse prior,
-then small enclosed holes are filled before the final hard clip to
-`SAM_prior & lasso_region & alpha_mask`.
-
-This is intentionally biased toward recall: for the future MAM/matting step it
-is better for the coarse SAM prior to contain slightly too much of the lasso
-region than to lose object parts before alpha refinement. MAM/trimap refinement
-is a follow-up and should consume this prior instead of requiring a perfect SAM
-binary mask.
-
-Full-image automatic mask generation remains available only in the legacy
-`prepare_segments` worker path for development compatibility.
-
-## MAM Alpha Refinement
-
-Default lasso selection now adds a quality-first matting refinement step after
-the recall-oriented SAM2 prior.
-
-Active refiner:
-
-- id: `mam_sam_vith`
-- title: MAM SAM ViT-H
-- source: `SHI-Labs/Matting-Anything`
-- source ref: `eb01e1c1f0016e2a4d00615b115f3b5ddcd031e4`
-- config: `config/MAM-ViTH-8gpu.toml`
-- SAM1 checkpoint: `sam_vit_h_4b8939.pth`
-- SAM1 expected size: `2564550879` bytes
-- MAM checkpoint: `mam_vith.pth`
-- MAM Google Drive file id: `1fmBLZMWfGE2QOsc3pPqhzzlvBYojLBox`
-- MAM expected size: `32785332` bytes
-
-MAM is not a SAM2 head. It uses SAM1 ViT-H feature maps plus a Mask-to-Matte
-module. The worker feeds the current SAM2 recall prior into MAM as trimap
-guidance, then writes a soft `uint8` alpha selection mask. The trimap has three
-zones:
-
-- `core`: eroded SAM2 prior, preserved as definite foreground;
-- `unknown`: a narrow dilated support band where MAM may refine alpha;
-- `background`: outside support, outside the lasso, or transparent document
-  alpha.
-
-MAM is treated as a boundary/alpha refiner, not a broad permission source. It
-can add or remove detail only inside the unknown band. A post-refinement gate
-compares MAM alpha against the SAM prior; if MAM grows or shrinks the result too
-aggressively, the worker rejects it and falls back to the SAM prior with
-`cache_state="rejected_mam"`. The final alpha is also clipped to the user lasso
-region and the document alpha mask.
-
-There is intentionally no silent ViT-B fallback. If the H checkpoint metadata or
-cache is invalid, the refiner reports a setup error. Runtime/inference failures
-after a valid SAM prior may fall back to the SAM prior and mark the refiner
-payload as `fallback_sam_prior`.
-
-Krita `Grow`, `Feather` and `Anti-aliasing` remain user-controlled
-post-selection options. The worker does not add a hidden final grow step.
-
-Follow-up: добавить настройку VRAM/performance budget в model picker. Для
-слабых GPU пользователь должен иметь возможность выбрать меньшую модель или
-меньший `points_per_batch`, не меняя quality preset вручную.
-
-SAM2 custom CUDA extension включён для mask post-processing. Runtime требует
-`sam2._C`, а `min_mask_region_area = 64` включает cleanup маленьких дыр и
-изолированных фрагментов внутри SAM2 automatic mask generator.
-
-Следующий MVP path должен использовать SAM2.1 Large через lasso/region prompt:
-пользователь задаёт область, worker запускает inference на crop/region, а
-результатом является single selection mask. Click-to-select по prepared
-full-image segment map не входит в ближайший MVP.
+- model picker;
+- BEN2;
+- RMBG;
+- SAM3;
+- vendor/audit BiRefNet custom code instead of dynamic HF custom code;
+- persistent model cache management UI.

@@ -1,7 +1,7 @@
 #include "../LassoRegionMask.h"
 #include "../NpyWriter.h"
-#include "../SegmentMap.h"
 #include "../SelectionMask.h"
+#include "../SmartSelectLog.h"
 #include "../SnapshotFingerprint.h"
 #include "../SnapshotImage.h"
 #include "../WorkerClient.h"
@@ -9,6 +9,7 @@
 #include <QColor>
 #include <QFile>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -18,36 +19,9 @@
 namespace
 {
 
-QByteArray makeNpy(const QByteArray& descr, int height, int width, const QVector<quint16>& values,
-    bool fortranOrder = false)
-{
-    QByteArray payload;
-    payload.reserve(values.size() * int(sizeof(quint16)));
-    for (const quint16 value : values) {
-        payload.append(char(value & 0xff));
-        payload.append(char((value >> 8) & 0xff));
-    }
-
-    QByteArray header = "{'descr': '" + descr
-        + "', 'fortran_order': " + (fortranOrder ? "True" : "False") + ", 'shape': ("
-        + QByteArray::number(height) + ", " + QByteArray::number(width) + "), }";
-    const int padding = 16 - ((10 + header.size() + 1) % 16);
-    header.append(QByteArray(padding, ' '));
-    header.append('\n');
-
-    QByteArray bytes = "\x93NUMPY";
-    bytes.append(char(1));
-    bytes.append(char(0));
-    bytes.append(char(header.size() & 0xff));
-    bytes.append(char((header.size() >> 8) & 0xff));
-    bytes.append(header);
-    bytes.append(payload);
-    return bytes;
-}
-
 QString writeTempFile(QTemporaryDir& dir, const QByteArray& bytes)
 {
-    QTemporaryFile file(dir.filePath(QStringLiteral("segment_map_XXXXXX.npy")));
+    QTemporaryFile file(dir.filePath(QStringLiteral("selection_mask_XXXXXX.npy")));
     file.setAutoRemove(false);
     if (!file.open()) {
         qFatal("Could not create temporary .npy fixture: %s", qPrintable(file.errorString()));
@@ -78,24 +52,6 @@ QByteArray makeUint8Npy(const QByteArray& descr, int height, int width, const QB
     return bytes;
 }
 
-QVector<quint16> samplePixels()
-{
-    return QVector<quint16> {
-        0,
-        1,
-        1,
-        0,
-        0,
-        2,
-        0,
-        0,
-        3,
-        3,
-        0,
-        0,
-    };
-}
-
 } // namespace
 
 class SmartSelectCoreTest : public QObject
@@ -103,11 +59,6 @@ class SmartSelectCoreTest : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
-    void loadNpyAcceptsUint16SegmentMap();
-    void loadNpyRejectsWrongDtype();
-    void loadNpyRejectsFortranOrder();
-    void loadNpyRejectsTruncatedPayload();
-    void segmentSelectionMaskUsesTightBounds();
     void exactFingerprintIsStableAndContentSensitive();
     void fingerprintIncludesAlphaMask();
     void fingerprintRejectsInvalidAlphaMask();
@@ -115,95 +66,11 @@ private Q_SLOTS:
     void snapshotNormalizationDetectsFullyTransparentImage();
     void writeUint8NpyWritesValidHeader();
     void writeUint8NpyRejectsInvalidPayloadSize();
-    void workerPrepareRequestIncludesCacheDirs();
     void workerPrepareSelectionRequestIncludesRegionFields();
     void selectionMaskLoadNpyAcceptsUint8Mask();
     void lassoRegionMaskRasterizesBounds();
+    void smartSelectLogFormatterUsesScalarStrings();
 };
-
-void SmartSelectCoreTest::loadNpyAcceptsUint16SegmentMap()
-{
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = writeTempFile(dir, makeNpy("<u2", 3, 4, samplePixels()));
-
-    SegmentMap map;
-    QString error;
-    QVERIFY2(map.loadNpy(path, &error), qPrintable(error));
-
-    QCOMPARE(map.width(), 4);
-    QCOMPARE(map.height(), 3);
-    QCOMPARE(map.bounds(), QRect(0, 0, 4, 3));
-    QCOMPARE(map.segmentCount(), 3);
-    QCOMPARE(map.segmentAt(QPoint(1, 0)), quint16(1));
-    QCOMPARE(map.segmentAt(QPoint(1, 1)), quint16(2));
-    QCOMPARE(map.segmentAt(QPoint(0, 2)), quint16(3));
-    QCOMPARE(map.segmentAt(QPoint(-1, 0)), quint16(0));
-    QCOMPARE(map.segmentAt(QPoint(4, 0)), quint16(0));
-}
-
-void SmartSelectCoreTest::loadNpyRejectsWrongDtype()
-{
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = writeTempFile(dir, makeNpy("<u4", 3, 4, samplePixels()));
-
-    SegmentMap map;
-    QString error;
-    QVERIFY(!map.loadNpy(path, &error));
-    QCOMPARE(error, QStringLiteral("Expected uint16 segment map"));
-}
-
-void SmartSelectCoreTest::loadNpyRejectsFortranOrder()
-{
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = writeTempFile(dir, makeNpy("<u2", 3, 4, samplePixels(), true));
-
-    SegmentMap map;
-    QString error;
-    QVERIFY(!map.loadNpy(path, &error));
-    QCOMPARE(error, QStringLiteral("Fortran-order .npy arrays are not supported"));
-}
-
-void SmartSelectCoreTest::loadNpyRejectsTruncatedPayload()
-{
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    QByteArray bytes = makeNpy("<u2", 3, 4, samplePixels());
-    bytes.chop(1);
-    const QString path = writeTempFile(dir, bytes);
-
-    SegmentMap map;
-    QString error;
-    QVERIFY(!map.loadNpy(path, &error));
-    QCOMPARE(error, QStringLiteral("Truncated .npy segment payload"));
-}
-
-void SmartSelectCoreTest::segmentSelectionMaskUsesTightBounds()
-{
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    const QString path = writeTempFile(dir, makeNpy("<u2", 3, 4, samplePixels()));
-
-    SegmentMap map;
-    QString error;
-    QVERIFY2(map.loadNpy(path, &error), qPrintable(error));
-
-    QCOMPARE(map.segmentBounds(1), QRect(1, 0, 2, 1));
-    QCOMPARE(map.segmentBounds(2), QRect(1, 1, 1, 1));
-    QCOMPARE(map.segmentBounds(3), QRect(0, 2, 2, 1));
-    QCOMPARE(map.segmentBounds(99), QRect());
-
-    QRect maskBounds;
-    const QByteArray mask = map.selectionMask(1, &maskBounds);
-    QCOMPARE(maskBounds, QRect(1, 0, 2, 1));
-    QCOMPARE(mask, QByteArray(2, char(255)));
-
-    const QByteArray emptyMask = map.selectionMask(99, &maskBounds);
-    QCOMPARE(maskBounds, QRect());
-    QVERIFY(emptyMask.isEmpty());
-}
 
 void SmartSelectCoreTest::exactFingerprintIsStableAndContentSensitive()
 {
@@ -308,33 +175,6 @@ void SmartSelectCoreTest::writeUint8NpyRejectsInvalidPayloadSize()
     QCOMPARE(error, QStringLiteral("Invalid uint8 .npy payload size"));
 }
 
-void SmartSelectCoreTest::workerPrepareRequestIncludesCacheDirs()
-{
-    PrepareSegmentsRequest request;
-    request.imagePath = QStringLiteral("/tmp/input.png");
-    request.alphaMaskPath = QStringLiteral("/tmp/alpha.npy");
-    request.modelId = QStringLiteral("sam2.1_hiera_large");
-    request.algorithmVersion = QStringLiteral("sam2.1-auto-mask-quality-v1");
-    request.fingerprint = QStringLiteral("fingerprint");
-    request.modelCacheDir = QStringLiteral("/tmp/models");
-    request.runtimeCacheDir = QStringLiteral("/tmp/runtime");
-    request.canvasSize = QSize(64, 48);
-
-    const QJsonObject message = prepareSegmentsRequestJson(12, request);
-    QCOMPARE(message.value(QStringLiteral("id")).toInt(), 12);
-    QCOMPARE(
-        message.value(QStringLiteral("method")).toString(), QStringLiteral("prepare_segments"));
-
-    const QJsonObject params = message.value(QStringLiteral("params")).toObject();
-    QCOMPARE(params.value(QStringLiteral("model_id")).toString(), request.modelId);
-    QCOMPARE(
-        params.value(QStringLiteral("algorithm_version")).toString(), request.algorithmVersion);
-    QCOMPARE(params.value(QStringLiteral("model_cache_dir")).toString(), request.modelCacheDir);
-    QCOMPARE(params.value(QStringLiteral("runtime_cache_dir")).toString(), request.runtimeCacheDir);
-    QCOMPARE(params.value(QStringLiteral("canvas_width")).toInt(), 64);
-    QCOMPARE(params.value(QStringLiteral("canvas_height")).toInt(), 48);
-}
-
 void SmartSelectCoreTest::workerPrepareSelectionRequestIncludesRegionFields()
 {
     PrepareSelectionRequest request;
@@ -342,13 +182,11 @@ void SmartSelectCoreTest::workerPrepareSelectionRequestIncludesRegionFields()
     request.alphaMaskPath = QStringLiteral("/tmp/alpha.npy");
     request.regionMaskPath = QStringLiteral("/tmp/region.npy");
     request.regionBbox = QRect(1, 2, 3, 4);
-    request.modelId = QStringLiteral("sam2.1_hiera_large");
-    request.refinerId = QStringLiteral("mam_sam_vith");
-    request.algorithmVersion = QStringLiteral("sam2.1-lasso-trimap-mam-v1");
+    request.modelId = QStringLiteral("birefnet_hr_matting");
+    request.algorithmVersion = QStringLiteral("birefnet-hr-matting-lasso-v1");
     request.fingerprint = QStringLiteral("fingerprint");
     request.modelCacheDir = QStringLiteral("/tmp/models");
     request.runtimeCacheDir = QStringLiteral("/tmp/runtime");
-    request.refinerCacheDir = QStringLiteral("/tmp/refiners");
     request.canvasSize = QSize(64, 48);
 
     const QJsonObject message = prepareSelectionRequestJson(13, request);
@@ -366,9 +204,12 @@ void SmartSelectCoreTest::workerPrepareSelectionRequestIncludesRegionFields()
     QCOMPARE(bbox.at(3).toInt(), 4);
     QCOMPARE(
         params.value(QStringLiteral("algorithm_version")).toString(), request.algorithmVersion);
+    QCOMPARE(params.value(QStringLiteral("model_id")).toString(), request.modelId);
+    QCOMPARE(params.value(QStringLiteral("model_cache_dir")).toString(), request.modelCacheDir);
     QCOMPARE(params.value(QStringLiteral("runtime_cache_dir")).toString(), request.runtimeCacheDir);
-    QCOMPARE(params.value(QStringLiteral("refiner_id")).toString(), request.refinerId);
-    QCOMPARE(params.value(QStringLiteral("refiner_cache_dir")).toString(), request.refinerCacheDir);
+    QVERIFY(!params.contains(QStringLiteral("refiner_id")));
+    QVERIFY(!params.contains(QStringLiteral("refiner_cache_dir")));
+    QVERIFY(!params.contains(QStringLiteral("segments_path")));
 }
 
 void SmartSelectCoreTest::selectionMaskLoadNpyAcceptsUint8Mask()
@@ -404,6 +245,24 @@ void SmartSelectCoreTest::lassoRegionMaskRasterizesBounds()
     QVERIFY(mask.bbox.intersects(QRect(1, 1, 4, 4)));
     QCOMPARE(mask.canvasSize, QSize(8, 8));
     QCOMPARE(mask.bytes.size(), 64);
+}
+
+void SmartSelectCoreTest::smartSelectLogFormatterUsesScalarStrings()
+{
+    const QString line = formatSmartSelectLogEvent(SmartSelectLogLevel::Info,
+        QStringLiteral("selection.start"),
+        { { QStringLiteral("model.id"), QStringLiteral("birefnet_hr_matting") },
+            { QStringLiteral("region.bbox"), QRect(1, 2, 3, 4) },
+            { QStringLiteral("environment.removed_keys"),
+                QStringList { QStringLiteral("PYTHONHOME"), QStringLiteral("PYTHONPATH") } } });
+
+    QVERIFY(line.contains(QStringLiteral("event.name=selection.start")));
+    QVERIFY(!line.contains(QStringLiteral("event.name=[\"selection.start\"]")));
+    QVERIFY(line.contains(QStringLiteral("severity=info")));
+    QVERIFY(line.contains(QStringLiteral("model.id=birefnet_hr_matting")));
+    QVERIFY(!line.contains(QStringLiteral("model.id=[\"birefnet_hr_matting\"]")));
+    QVERIFY(line.contains(QStringLiteral("region.bbox=[1,2,3,4]")));
+    QVERIFY(line.contains(QStringLiteral("environment.removed_keys=[\"PYTHONHOME\",\"PYTHONPATH\"]")));
 }
 
 QTEST_GUILESS_MAIN(SmartSelectCoreTest)

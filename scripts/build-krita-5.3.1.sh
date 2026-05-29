@@ -45,6 +45,8 @@ cmake -S "$KRITA_SRC" -B "$KRITA_BUILD" \
 
 cmake --build "$KRITA_BUILD" --target kritasmartselect --parallel "$BUILD_JOBS"
 
+rm -rf "$INSTALL_PREFIX/pykrita/smart_select" "$INSTALL_PREFIX/pykrita/smart_select.desktop" \
+  "$INSTALL_PREFIX/share/krita/actions/SmartSelectTool.action"
 mkdir -p "$INSTALL_PREFIX/pykrita/smart_select/lib"
 mkdir -p "$INSTALL_PREFIX/share/krita/actions"
 cp "$KRITA_BUILD/bin/kritasmartselect.so" "$INSTALL_PREFIX/pykrita/smart_select/lib/"

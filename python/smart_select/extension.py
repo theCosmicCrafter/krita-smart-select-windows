@@ -6,8 +6,40 @@ import platform
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from krita import Extension
+
+
+def _log_event(event_name: str, **fields: object) -> None:
+    parts = [
+        "[SmartSelect]",
+        f"event.name={_format_value(event_name)}",
+        "event.domain=smart_select",
+        "severity=info",
+        "component=python_loader",
+    ]
+    parts.extend(f"{key}={_format_value(value)}" for key, value in fields.items())
+    print(" ".join(parts), flush=True)
+
+
+def _format_value(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    text = str(value)
+    if text and all(ch.isalnum() or ch in "_./:@+-" for ch in text):
+        return text
+    import json
+
+    return json.dumps(value, ensure_ascii=False, default=_json_default)
+
+
+def _json_default(value: Any) -> str:
+    return str(value)
 
 
 class SmartSelectExtension(Extension):
@@ -24,15 +56,16 @@ class SmartSelectExtension(Extension):
     def _load_native_plugin(self) -> None:
         package_dir = Path(__file__).resolve().parent
         lib_dir = package_dir / "lib"
-        print(
-            "[SmartSelect] event=setup.start "
-            f"plugin_version=0.1.0-mvp "
-            f"python_version={sys.version.split()[0]} "
-            f"sys_executable={sys.executable} "
-            f"platform={platform.platform()} "
-            f"machine={platform.machine()} "
-            f"package_dir={package_dir}",
-            flush=True,
+        _log_event(
+            "setup.start",
+            **{
+                "plugin.version": "0.1.0-mvp",
+                "runtime.python.version": sys.version.split()[0],
+                "python.executable.path": sys.executable,
+                "platform.name": platform.platform(),
+                "platform.machine": platform.machine(),
+                "package.dir": str(package_dir),
+            },
         )
         candidates = [
             lib_dir / "kritasmartselect.so",
@@ -48,11 +81,12 @@ class SmartSelectExtension(Extension):
         for candidate in candidates:
             if candidate.exists():
                 python_executable = _worker_executable(package_dir)
-                print(
-                    "[SmartSelect] event=setup.native_library.load "
-                    f"library={candidate} "
-                    f"worker_python={python_executable}",
-                    flush=True,
+                _log_event(
+                    "setup.native_library.load",
+                    **{
+                        "library.path": str(candidate),
+                        "python.executable.path": str(python_executable),
+                    },
                 )
                 self._library = ctypes.CDLL(str(candidate), mode=ctypes.RTLD_GLOBAL)
                 load_with_runtime = getattr(
@@ -66,15 +100,18 @@ class SmartSelectExtension(Extension):
                         str(python_executable).encode("utf-8"),
                     )
                 else:
-                    print("[SmartSelect] event=setup.native_abi.fallback", flush=True)
+                    _log_event("setup.native_abi.fallback")
                     self._library.load_smart_select_plugin()
-                print("[SmartSelect] event=setup.complete", flush=True)
+                _log_event("setup.complete")
                 return
 
         names = ", ".join(str(path) for path in candidates)
-        print(
-            f"[SmartSelect] event=setup.failed reason=native_library_not_found checked={names}",
-            flush=True,
+        _log_event(
+            "setup.failed",
+            **{
+                "error.reason": "native_library_not_found",
+                "library.checked": names,
+            },
         )
         raise RuntimeError(f"Smart Select native library was not found. Checked: {names}")
 

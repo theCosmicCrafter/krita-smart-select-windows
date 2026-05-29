@@ -36,9 +36,8 @@
 namespace
 {
 
-const QString DEFAULT_MODEL_ID = QStringLiteral("sam2.1_hiera_large");
-const QString DEFAULT_REFINER_ID = QStringLiteral("mam_sam_vith");
-const QString ALGORITHM_VERSION = QStringLiteral("sam2.1-lasso-trimap-mam-v1");
+const QString DEFAULT_MODEL_ID = QStringLiteral("birefnet_hr_matting");
+const QString ALGORITHM_VERSION = QStringLiteral("birefnet-hr-matting-lasso-v1");
 
 QStringList appendPath(QStringList paths, const QString& path)
 {
@@ -46,6 +45,47 @@ QStringList appendPath(QStringList paths, const QString& path)
         paths.append(path);
     }
     return paths;
+}
+
+QString userMessageForWorkerError(const QString& type, const QString& fallbackMessage)
+{
+    if (type == QStringLiteral("RuntimeCacheDirMissing")) {
+        return i18n("runtime cache is not writable");
+    }
+    if (type == QStringLiteral("RuntimeBootstrapError")) {
+        return i18n("alpha runtime setup failed");
+    }
+    if (type == QStringLiteral("RuntimeDependencyError")) {
+        return i18n("alpha runtime dependencies are not available");
+    }
+    if (type == QStringLiteral("RuntimeValidationError")) {
+        return i18n("alpha runtime validation failed");
+    }
+    if (type == QStringLiteral("ModelCacheDirMissing")) {
+        return i18n("model cache is not writable");
+    }
+    if (type == QStringLiteral("ModelDownloadError")) {
+        return i18n("model download failed");
+    }
+    if (type == QStringLiteral("ModelVerificationError")) {
+        return i18n("model verification failed");
+    }
+    if (type == QStringLiteral("UnknownModel")) {
+        return i18n("unknown model");
+    }
+    if (type == QStringLiteral("InferenceOutOfMemory")) {
+        return i18n("alpha extraction ran out of GPU memory");
+    }
+    if (type == QStringLiteral("InferenceFailed")) {
+        return i18n("alpha extraction failed");
+    }
+    if (type == QStringLiteral("EmptyRegion")) {
+        return i18n("lasso region is empty");
+    }
+    if (type == QStringLiteral("EmptySelection")) {
+        return i18n("selection is empty");
+    }
+    return fallbackMessage;
 }
 
 } // namespace
@@ -147,7 +187,6 @@ bool SmartSelectTool::startWorkerIfNeeded()
     if (!m_worker) {
         m_worker = new WorkerClient(this);
         connect(m_worker, &WorkerClient::progress, this, &SmartSelectTool::onWorkerProgress);
-        connect(m_worker, &WorkerClient::result, this, &SmartSelectTool::onWorkerResult);
         connect(m_worker, &WorkerClient::selectionResult, this,
             &SmartSelectTool::onWorkerSelectionResult);
         connect(m_worker, &WorkerClient::error, this, &SmartSelectTool::onWorkerError);
@@ -291,7 +330,6 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
     const SmartSelectRuntimeConfig& config = SmartSelectRuntimeConfig::instance();
     const QString modelCacheDir = config.modelCacheDir();
     const QString runtimeCacheDir = config.runtimeCacheDir();
-    const QString refinerCacheDir = config.refinerCacheDir();
     if (modelCacheDir.isEmpty() || !QDir().mkpath(modelCacheDir)
         || !QFileInfo(modelCacheDir).isWritable()) {
         logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("model.cache.failed"),
@@ -310,15 +348,6 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
         setState(State::Error, i18n("runtime cache is not writable"));
         return;
     }
-    if (refinerCacheDir.isEmpty() || !QDir().mkpath(refinerCacheDir)
-        || !QFileInfo(refinerCacheDir).isWritable()) {
-        logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("refiner.cache.failed"),
-            { { QStringLiteral("error.reason"), QStringLiteral("refiner_cache_not_writable") },
-                { QStringLiteral("refiner.cache.dir"), refinerCacheDir } });
-        cleanupTempFiles(files.cleanupPaths);
-        setState(State::Error, i18n("edge refiner cache is not writable"));
-        return;
-    }
 
     PrepareSelectionRequest request;
     request.imagePath = files.imagePath;
@@ -326,12 +355,10 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
     request.regionMaskPath = regionMaskPath;
     request.regionBbox = regionMask.bbox;
     request.modelId = DEFAULT_MODEL_ID;
-    request.refinerId = DEFAULT_REFINER_ID;
     request.algorithmVersion = ALGORITHM_VERSION;
     request.fingerprint = snapshot.fingerprint;
     request.modelCacheDir = modelCacheDir;
     request.runtimeCacheDir = runtimeCacheDir;
-    request.refinerCacheDir = refinerCacheDir;
     request.canvasSize = snapshot.canvasSize;
 
     m_activeSelectionOptions.action = selectionAction();
@@ -348,7 +375,6 @@ void SmartSelectTool::startSelectionJob(const QVector<QPointF>& points)
         { { QStringLiteral("job.id"), m_activeJobId },
             { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
             { QStringLiteral("model.id"), request.modelId },
-            { QStringLiteral("refiner.id"), request.refinerId },
             { QStringLiteral("algorithm.version"), request.algorithmVersion },
             { QStringLiteral("image.fingerprint.prefix"), fingerprintPrefix(request.fingerprint) },
             { QStringLiteral("image.size"), request.canvasSize },
@@ -447,28 +473,28 @@ QString SmartSelectTool::fingerprintPrefix(const QString& fingerprint) const
 QString SmartSelectTool::friendlyStageText(const QString& stage) const
 {
     if (stage == QStringLiteral("checking_runtime")) {
-        return i18n("Checking SAM2 runtime...");
+        return i18n("Checking alpha runtime...");
     }
     if (stage == QStringLiteral("creating_runtime")) {
-        return i18n("Creating SAM2 runtime...");
+        return i18n("Creating alpha runtime...");
     }
     if (stage == QStringLiteral("installing_runtime_dependencies")) {
-        return i18n("Installing SAM2 runtime...");
+        return i18n("Installing alpha runtime...");
     }
     if (stage == QStringLiteral("validating_runtime")) {
-        return i18n("Validating SAM2 runtime...");
+        return i18n("Validating alpha runtime...");
     }
     if (stage == QStringLiteral("resolving_model")) {
-        return i18n("Preparing model...");
+        return i18n("Preparing alpha model...");
     }
     if (stage == QStringLiteral("checking_model_cache")) {
         return i18n("Checking model cache...");
     }
     if (stage == QStringLiteral("downloading_model")) {
-        return i18n("Downloading SAM2.1 Large...");
+        return i18n("Downloading BiRefNet...");
     }
     if (stage == QStringLiteral("verifying_model")) {
-        return i18n("Verifying SAM2.1 Large...");
+        return i18n("Verifying BiRefNet...");
     }
     if (stage == QStringLiteral("reading_image")) {
         return i18n("Reading image...");
@@ -477,34 +503,13 @@ QString SmartSelectTool::friendlyStageText(const QString& stage) const
         return i18n("Preparing image...");
     }
     if (stage == QStringLiteral("loading_model")) {
-        return i18n("Loading SAM2.1 Large...");
+        return i18n("Loading BiRefNet...");
     }
-    if (stage == QStringLiteral("running_sam")) {
-        return i18n("Running SAM2.1 Large...");
-    }
-    if (stage == QStringLiteral("building_selection_mask")) {
-        return i18n("Building selection...");
-    }
-    if (stage == QStringLiteral("resolving_refiner")) {
-        return i18n("Preparing edge refiner...");
-    }
-    if (stage == QStringLiteral("checking_refiner_cache")) {
-        return i18n("Checking MAM cache...");
-    }
-    if (stage == QStringLiteral("downloading_refiner")) {
-        return i18n("Downloading MAM...");
-    }
-    if (stage == QStringLiteral("verifying_refiner")) {
-        return i18n("Verifying MAM...");
-    }
-    if (stage == QStringLiteral("loading_refiner")) {
-        return i18n("Loading MAM...");
-    }
-    if (stage == QStringLiteral("running_mam")) {
-        return i18n("Refining edges...");
+    if (stage == QStringLiteral("running_alpha_model")) {
+        return i18n("Extracting alpha...");
     }
     if (stage == QStringLiteral("building_alpha_mask")) {
-        return i18n("Building alpha selection...");
+        return i18n("Building selection...");
     }
     return stage;
 }
@@ -567,22 +572,10 @@ void SmartSelectTool::onWorkerProgress(
     updateOptionsUi();
 }
 
-void SmartSelectTool::onWorkerResult(
-    int id, const QString& segmentMapPath, const QString& segmentsPath, const QJsonArray& metadata)
-{
-    Q_UNUSED(metadata);
-    logSmartSelectEvent(SmartSelectLogLevel::Info,
-        QStringLiteral("inference.result.ignored_legacy"),
-        { { QStringLiteral("job.id"), id },
-            { QStringLiteral("job.type"), QStringLiteral("legacy_prepare_segments") },
-            { QStringLiteral("file.segment_map.path"), segmentMapPath } });
-    cleanupTempFiles(QStringList { segmentMapPath, segmentsPath });
-}
-
 void SmartSelectTool::onWorkerSelectionResult(int id, const QString& selectionMaskPath,
-    const QString& segmentsPath, const QJsonArray& metadata)
+    const QJsonArray& metadata)
 {
-    const QStringList resultCleanupPaths { selectionMaskPath, segmentsPath };
+    const QStringList resultCleanupPaths { selectionMaskPath };
     const bool staleImage = !currentImage()
         || reinterpret_cast<quintptr>(currentImage().data()) != m_activeJobImagePtr;
 
@@ -600,7 +593,6 @@ void SmartSelectTool::onWorkerSelectionResult(int id, const QString& selectionMa
         { { QStringLiteral("job.id"), id },
             { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
             { QStringLiteral("file.selection_mask.path"), selectionMaskPath },
-            { QStringLiteral("file.segments.path"), segmentsPath },
             { QStringLiteral("metadata.count"), metadata.size() } });
 
     QString error;
@@ -631,22 +623,25 @@ void SmartSelectTool::onWorkerSelectionResult(int id, const QString& selectionMa
 
 void SmartSelectTool::onWorkerError(int id, const QString& type, const QString& message)
 {
+    const QString userMessage = userMessageForWorkerError(type, message);
     if (id != 0 && id != m_activeJobId) {
         logSmartSelectEvent(SmartSelectLogLevel::Info,
             QStringLiteral("selection.error.ignored_stale"),
             { { QStringLiteral("job.id"), id }, { QStringLiteral("job.active_id"), m_activeJobId },
                 { QStringLiteral("error.type"), type },
-                { QStringLiteral("error.message"), message } });
+                { QStringLiteral("error.message"), message },
+                { QStringLiteral("error.user_message"), userMessage } });
         return;
     }
 
     logSmartSelectEvent(SmartSelectLogLevel::Warning, QStringLiteral("selection.failed"),
         { { QStringLiteral("job.id"), id },
             { QStringLiteral("job.type"), QStringLiteral("lasso_selection") },
-            { QStringLiteral("error.type"), type }, { QStringLiteral("error.message"), message } });
+            { QStringLiteral("error.type"), type }, { QStringLiteral("error.message"), message },
+            { QStringLiteral("error.user_message"), userMessage } });
     cleanupTempFiles(m_activeJobCleanupPaths);
     clearActiveJobState();
-    setState(State::Error, message);
+    setState(State::Error, userMessage);
 }
 
 void SmartSelectTool::onWorkerStderr(const QString& line)

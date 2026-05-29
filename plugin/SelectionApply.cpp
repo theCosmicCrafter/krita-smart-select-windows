@@ -38,38 +38,6 @@ void adjustSelection(KisPixelSelectionSP const& selection, int grow, int feather
 
 } // namespace
 
-bool applySegmentSelection(KoCanvasBase *canvas, KisImageSP image, KisNodeSP node,
-    const SegmentMap& segmentMap, quint16 segmentId, SelectionAction action, int grow, int feather,
-    bool antiAlias)
-{
-    KisCanvas2 *kisCanvas = dynamic_cast<KisCanvas2 *>(canvas);
-    if (!kisCanvas || !image || segmentId == 0) {
-        return false;
-    }
-
-    QRect maskBounds;
-    const QByteArray mask = segmentMap.selectionMask(segmentId, &maskBounds);
-    if (mask.isEmpty() || maskBounds.isEmpty()) {
-        return false;
-    }
-
-    KisPaintDeviceSP defaultDevice = image->projection();
-    KisPixelSelectionSP selection
-        = new KisPixelSelection(new KisSelectionDefaultBounds(defaultDevice));
-    selection->writeBytes(reinterpret_cast<const quint8 *>(mask.constData()), maskBounds);
-    adjustSelection(selection, grow, feather, antiAlias);
-    selection->invalidateOutlineCache();
-
-    KisCursorOverrideLock cursorLock(KisCursor::waitCursor());
-    KisProcessingApplicator applicator(image, node, KisProcessingApplicator::NO_IMAGE_UPDATES,
-        KisImageSignalVector(), kundo2_i18n("Smart Select"));
-
-    KisSelectionToolHelper helper(kisCanvas, kundo2_i18n("Smart Select"));
-    helper.selectPixelSelection(applicator, selection, action);
-    applicator.end();
-    return true;
-}
-
 bool applySelectionMask(KoCanvasBase *canvas, KisImageSP image, KisNodeSP node,
     const SelectionMask& mask, SelectionAction action, int grow, int feather, bool antiAlias)
 {

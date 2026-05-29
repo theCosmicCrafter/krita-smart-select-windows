@@ -8,18 +8,6 @@
 #include <QRect>
 #include <QSize>
 
-struct PrepareSegmentsRequest
-{
-    QString imagePath;
-    QString alphaMaskPath;
-    QString modelId;
-    QString algorithmVersion;
-    QString fingerprint;
-    QString modelCacheDir;
-    QString runtimeCacheDir;
-    QSize canvasSize;
-};
-
 struct PrepareSelectionRequest
 {
     QString imagePath;
@@ -31,30 +19,8 @@ struct PrepareSelectionRequest
     QString fingerprint;
     QString modelCacheDir;
     QString runtimeCacheDir;
-    QString refinerId;
-    QString refinerCacheDir;
     QSize canvasSize;
 };
-
-inline QJsonObject prepareSegmentsRequestJson(int id, const PrepareSegmentsRequest& request)
-{
-    QJsonObject params;
-    params["image_path"] = request.imagePath;
-    params["alpha_mask_path"] = request.alphaMaskPath;
-    params["model_id"] = request.modelId;
-    params["algorithm_version"] = request.algorithmVersion;
-    params["fingerprint"] = request.fingerprint;
-    params["model_cache_dir"] = request.modelCacheDir;
-    params["runtime_cache_dir"] = request.runtimeCacheDir;
-    params["canvas_width"] = request.canvasSize.width();
-    params["canvas_height"] = request.canvasSize.height();
-
-    QJsonObject message;
-    message["id"] = id;
-    message["method"] = QStringLiteral("prepare_segments");
-    message["params"] = params;
-    return message;
-}
 
 inline QJsonObject prepareSelectionRequestJson(int id, const PrepareSelectionRequest& request)
 {
@@ -75,8 +41,6 @@ inline QJsonObject prepareSelectionRequestJson(int id, const PrepareSelectionReq
     params["fingerprint"] = request.fingerprint;
     params["model_cache_dir"] = request.modelCacheDir;
     params["runtime_cache_dir"] = request.runtimeCacheDir;
-    params["refiner_id"] = request.refinerId;
-    params["refiner_cache_dir"] = request.refinerCacheDir;
     params["canvas_width"] = request.canvasSize.width();
     params["canvas_height"] = request.canvasSize.height();
 
@@ -98,16 +62,12 @@ public:
     bool start(const QString& pythonExecutable, const QString& workerScript);
     void stop();
 
-    int prepareSegments(const PrepareSegmentsRequest& request);
     int prepareSelection(const PrepareSelectionRequest& request);
     void cancel(int jobId);
 
 Q_SIGNALS:
     void progress(int id, const QString& stage, double progress, bool hasProgress);
-    void result(int id, const QString& segmentMapPath, const QString& segmentsPath,
-        const QJsonArray& metadata);
-    void selectionResult(int id, const QString& selectionMaskPath, const QString& segmentsPath,
-        const QJsonArray& metadata);
+    void selectionResult(int id, const QString& selectionMaskPath, const QJsonArray& metadata);
     void error(int id, const QString& type, const QString& message);
     void stderrLine(const QString& line);
     void crashed(const QString& message);

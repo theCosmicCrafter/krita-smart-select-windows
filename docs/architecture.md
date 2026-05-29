@@ -4,146 +4,112 @@
 
 Inference не должен блокировать UI Krita.
 
-Предпочтительная архитектура:
-
-- UI плагина и canvas integration остаются отзывчивыми.
-- Тяжёлая загрузка моделей и сегментация выполняются в worker-процессе.
-- Worker отправляет progress, cancellation, result и error events.
-- Сбои PyTorch, CUDA или модельного кода не должны крашить или замораживать
-  Krita.
+- UI plugin and canvas integration stay responsive.
+- Model download, runtime bootstrap and inference run in a worker process.
+- Worker sends progress, cancellation, result and error events.
+- PyTorch, CUDA, Hugging Face custom model code or dependency failures must not
+  crash Krita.
 
 ## C++ / Python Split
 
 C++ часть отвечает за:
 
 - native Krita tool lifecycle;
-- получение canvas/image coordinates;
-- cursor и selection modifier behavior;
-- сбор lasso/freehand region input на canvas;
-- отрисовку lasso/preparation/result preview в `paint()`;
-- применение mask как обычного выделения Krita;
-- инвалидацию interaction state при смене документа, tool или изображения.
+- canvas/image coordinates;
+- native lasso/freehand input;
+- selection modifier behavior;
+- flattened RGB snapshot export;
+- document alpha and lasso region mask export;
+- applying returned `selection_mask.npy` as a Krita selection;
+- stale-result protection when tool, image or document changes.
 
 Python часть отвечает за:
 
-- loader wrapper для native library;
+- loader wrapper for the native library;
 - worker process entrypoint;
-- model registry;
-- download/cache orchestration;
-- PyTorch/SAM2 inference в worker process.
+- BiRefNet model registry;
+- model download/cache verification;
+- managed runtime bootstrap;
+- BiRefNet alpha inference;
+- clipping alpha to `lasso_region & document_alpha`.
 
-Граница между C++ tool и worker должна быть небольшой: C++ передаёт snapshot
-изображения и lasso/region prompt на подготовку, worker возвращает result mask,
-опциональную `segment_map`, masks и metadata, после чего C++ выполняет preview и
-selection apply.
+The boundary is intentionally small: C++ writes temp files and sends paths,
+worker returns one `selection_mask.npy` plus metadata, C++ reads the mask into
+memory and applies it.
 
 ## Canvas Integration
 
-Для MVP canvas/tool слой должен быть C++/hybrid, а не Python-only overlay.
+The canvas/tool layer is native C++.
 
-Overlay/preview не является отдельным floating window или QWidget. Это
-состояние отрисовки нативного Krita tool-а:
-
-- по умолчанию overlay ничего не рисует;
-- во время lasso gesture tool рисует нативный контур области;
-- пока worker готовит результат, tool показывает preparing state;
-- после результата tool рисует полупрозрачную mask preview в `paint()`;
-- repaint ограничивается bbox preview/region там, где это практически возможно.
-
-Full-image prepared hover/click spike может использовать label/segment map
-формат `pixel -> segment_id` для O(1) hit-test. Для основного MVP lasso workflow
-authoritative result может быть single mask с bbox/metadata; full-canvas
-`segment_map` остаётся допустимым транспортным форматом, если это упрощает C++
-selection apply.
+- Activating Smart Select does not start inference.
+- The user draws a lasso region.
+- During worker execution Tool Options shows the current stage and cancel.
+- Result is applied automatically as a native Krita selection.
+- There is no full-image hover/click segment selection in the MVP path.
 
 ## Selection Behavior
 
-Поведение lasso-выделения должно соответствовать обычным инструментам выделения
-Krita:
+Smart Select should follow native Krita selection conventions:
 
-- Завершение lasso gesture без modifier: replace текущего выделения.
-- Shift + завершение lasso: add.
-- Alt/Ctrl + завершение lasso: subtract/intersect/toggle в соответствии с нативными
-  conventions Krita и доступными `SelectionAction`.
-- Маленький/пустой lasso gesture должен вести себя как стандартный Krita
-  selection tool: click outside current selection deselects when native Krita
-  `tryDeselectCurrentSelection` считает это допустимым.
+- default lasso completion replaces selection;
+- Shift adds;
+- Alt/Ctrl actions follow Krita `SelectionAction`;
+- click outside current selection should deselect through native Krita selection
+  helper semantics when possible;
+- Grow, Feather and Anti-aliasing are standard post-selection options.
 
-Точное сопоставление Alt/Ctrl нужно брать из Krita selection tool behavior, а не
-изобретать отдельно.
+## Preparing UI Stages
 
-## Preparing UI States
+Current worker stages:
 
-Пока worker занят, UI не должен выглядеть зависшим:
+- `checking_runtime`
+- `creating_runtime`
+- `installing_runtime_dependencies`
+- `validating_runtime`
+- `resolving_model`
+- `checking_model_cache`
+- `downloading_model`
+- `verifying_model`
+- `loading_model`
+- `running_alpha_model`
+- `building_alpha_mask`
 
-- На canvas или в tool options нужно показывать `Preparing smart selection...`.
-- Нужно показывать текущий stage: `checking_runtime`, `creating_runtime`,
-  `installing_runtime_dependencies`, `validating_runtime`, `resolving_model`,
-  `checking_model_cache`, `downloading_model`, `verifying_model`,
-  `reading_image`, `preprocessing_image`, `loading_model`, `running_sam`,
-  `building_selection_mask`, `resolving_refiner`, `checking_refiner_cache`,
-  `downloading_refiner`, `verifying_refiner`, `loading_refiner`, `running_mam`,
-  `building_alpha_mask`.
-- Progress должен появляться быстро, даже если сначала он indeterminate.
-- Должна быть кнопка Cancel.
-- Если пользователь сменил tool, документ или закрыл изображение, job должен
-  отменяться или уходить в безопасный background state без применения результата
-  к неправильному документу.
-- Ошибка подготовки должна показывать короткое понятное сообщение и действия из
-  support flow.
-
-## Product Direction
-
-Первоначальный canvas spike доказал full-image prepared hover/click overlay, но
-качество automatic masks на сложных краях оказалось главным ограничением.
-Основной MVP workflow переориентирован на lasso/region-prompted segmentation:
-пользователь задаёт область интереса, SAM2 работает на crop/region prompt, а
-результат применяется как выделение без дополнительного click-to-select шага.
+If the user switches tool, closes the image or cancels, C++ ignores stale late
+results.
 
 ## Packaging Target
-
-MVP таргетирует конкретную версию Krita, а не широкий диапазон версий.
-
-Начальный target:
 
 - Linux.
 - Krita 5.3.1.
 - Native C++ module/library.
-- Python extension как loader wrapper.
+- Python extension as loader wrapper.
 
-Поддержка нескольких версий Krita и кросс-версионная binary compatibility не
-являются целью первого MVP.
+Cross-version Krita compatibility is not a first-MVP goal.
 
 ## Current Implementation Status
 
-Уже реализовано:
+Implemented:
 
 - native Smart Select tool registration;
-- lasso/freehand Smart Select input;
-- lasso/region-prompted SAM2 selection apply;
-- Python loader wrapper;
-- worker-backed lasso selection через `QProcess`;
-- flattened snapshot export as RGB PNG plus alpha mask;
-- downscaled `128x128` snapshot fingerprint;
-- Tool Options status/progress/cancel block;
-- ModelRegistry для `sam2.1_hiera_large`;
-- worker-side checkpoint download/cache/verify;
-- worker-managed system Python venv/cache для SAM2 runtime;
-- real SAM2.1 Large prompted selection;
-- conversion from SAM/MAM masks to full-canvas `uint8` selection mask;
-- recall-oriented SAM prior building from multiple prompted candidates;
-- candidate ranking by model score, lasso coverage, prompt points and lasso
-  boundary contact;
-- small enclosed hole fill in the merged prior before final hard clip;
-- trimap-constrained MAM SAM ViT-H alpha refinement on top of the SAM prior;
-- soft alpha selection preservation in C++ selection apply;
-- opt-in debug export for prior/refined/final alpha masks;
-- runtime diagnostics foundation;
-- type checking and code tests.
+- native lasso/freehand Smart Select input;
+- click-outside deselect behavior through Krita selection helper;
+- flattened RGB snapshot and alpha mask export;
+- lasso region mask export;
+- worker-backed `prepare_selection` through `QProcess`;
+- managed BiRefNet runtime venv/cache;
+- pinned BiRefNet HR Matting model registry and Hugging Face snapshot cache;
+- soft `uint8` alpha selection mask result;
+- C++ soft alpha preservation in Krita selection apply;
+- Tool Options progress/cancel/status;
+- OTel-compatible structured logs;
+- opt-in debug export for BiRefNet alpha;
+- typed Python worker tests and C++ core tests.
 
-Ещё не реализовано:
+Not implemented:
 
-- model picker and lighter model presets;
-- positive/negative point editing UI;
+- model picker;
+- alternative model backends;
+- prompt point editing;
 - preview/confirm flow;
-- persistent logs and support dialog.
+- persistent logs and support dialog;
+- GUI automation.

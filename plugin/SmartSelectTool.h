@@ -94,10 +94,8 @@ private:
     QString friendlyStageText(const QString& stage) const;
 
     void onWorkerProgress(int id, const QString& stage, double progress, bool hasProgress);
-    void onWorkerResult(int id, const QString& segmentMapPath, const QString& segmentsPath,
-        const QJsonArray& metadata);
     void onWorkerSelectionResult(int id, const QString& selectionMaskPath,
-        const QString& segmentsPath, const QJsonArray& metadata);
+        const QJsonArray& metadata);
     void onWorkerError(int id, const QString& type, const QString& message);
     void onWorkerStderr(const QString& line);
     void onWorkerCrashed(const QString& message);

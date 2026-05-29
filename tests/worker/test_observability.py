@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import contextlib
 import io
+import sys
 import unittest
+from pathlib import Path
 
 from worker.observability import log_event
+
+PYTHON_PACKAGE_DIR = Path(__file__).resolve().parents[2] / "python" / "smart_select"
+if str(PYTHON_PACKAGE_DIR) not in sys.path:
+    sys.path.insert(0, str(PYTHON_PACKAGE_DIR))
+
+from worker_launcher import format_log_event  # noqa: E402
 
 
 class ObservabilityTests(unittest.TestCase):
@@ -53,6 +61,17 @@ class ObservabilityTests(unittest.TestCase):
         self.assertIn("event.name=model.download.failed", stderr.getvalue())
         self.assertIn("severity=error", stderr.getvalue())
         self.assertIn("component=model_cache", stderr.getvalue())
+
+    def test_worker_launcher_uses_event_name(self) -> None:
+        line = format_log_event(
+            "worker.launcher.failed", **{"error.reason": "missing_worker_script"}
+        )
+
+        self.assertIn("event.name=worker.launcher.failed", line)
+        self.assertIn("event.domain=smart_select", line)
+        self.assertIn("component=worker_launcher", line)
+        self.assertIn("error.reason=missing_worker_script", line)
+        self.assertNotIn("event=worker.launcher.failed", line)
 
 
 if __name__ == "__main__":

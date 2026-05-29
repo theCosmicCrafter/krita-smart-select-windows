@@ -15,4 +15,7 @@ enum class SmartSelectLogLevel
 void logSmartSelectEvent(
     SmartSelectLogLevel level, const QString& eventName, const QVariantMap& fields = QVariantMap());
 
+QString formatSmartSelectLogEvent(
+    SmartSelectLogLevel level, const QString& eventName, const QVariantMap& fields = QVariantMap());
+
 #endif // SMART_SELECT_LOG_H_

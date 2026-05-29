@@ -15,7 +15,7 @@
 - worker protocol;
 - model registry;
 - runtime environment bootstrap;
-- SAM2 mask-to-segment-map conversion;
+- BiRefNet alpha inference and alpha-mask building;
 - cache keys;
 - snapshot metadata;
 - pure Python core modules;
@@ -28,7 +28,8 @@
 - Krita/PyQt adapter code;
 - dynamic UI integration;
 - ctypes native loader;
-- dynamic imports for optional runtime dependencies such as torch, PIL and SAM2;
+- dynamic imports for optional runtime dependencies such as torch, PIL,
+  transformers and Hugging Face Hub;
 - места, где API Krita не имеет внятных Python stubs.
 
 ## Python Policy
@@ -58,8 +59,8 @@ Stub policy:
 - Использовать конкретные типы вместо `QVariant`/loose JSON во внутренней
   логике.
 - Использовать `enum class` для state.
-- Segment ids должны быть explicit: сейчас `quint16`, потому что segment map
-  contract использует `<u2`.
+- Selection alpha values должны сохраняться как raw `uint8` `0..255`; не
+  binarize before apply.
 - Если worker JSON становится сложнее, парсить его в typed DTO перед передачей
   глубже в tool/core logic.
 

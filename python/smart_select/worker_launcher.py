@@ -10,10 +10,37 @@ from typing import NoReturn
 RUNTIME_WORKER_PYTHON = "3.12"
 
 
+def format_log_event(event_name: str, **fields: object) -> str:
+    parts = [
+        "[SmartSelectWorker]",
+        f"event.name={_format_value(event_name)}",
+        "event.domain=smart_select",
+        "severity=info",
+        "component=worker_launcher",
+    ]
+    parts.extend(f"{key}={_format_value(value)}" for key, value in fields.items())
+    return " ".join(parts)
+
+
+def _format_value(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return str(value)
+    text = str(value)
+    if text and all(ch.isalnum() or ch in "_./:@+-" for ch in text):
+        return text
+    import json
+
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 def main() -> NoReturn:
     if len(sys.argv) < 2:
         print(
-            "[SmartSelectWorker] event=worker.launcher.failed reason=missing_worker_script",
+            format_log_event("worker.launcher.failed", **{"error.reason": "missing_worker_script"}),
             file=sys.stderr,
             flush=True,
         )
@@ -22,14 +49,20 @@ def main() -> NoReturn:
     uv = shutil.which("uv")
     if uv is None:
         print(
-            "[SmartSelectWorker] event=worker.launcher.failed reason=uv_not_found",
+            format_log_event("worker.launcher.failed", **{"error.reason": "uv_not_found"}),
             file=sys.stderr,
             flush=True,
         )
         os.execvp("python3", ["python3", *sys.argv[1:]])
 
     print(
-        f"[SmartSelectWorker] event=worker.launcher.exec mode=uv python={RUNTIME_WORKER_PYTHON}",
+        format_log_event(
+            "worker.launcher.exec",
+            **{
+                "launcher.mode": "uv",
+                "runtime.python.version": RUNTIME_WORKER_PYTHON,
+            },
+        ),
         file=sys.stderr,
         flush=True,
     )

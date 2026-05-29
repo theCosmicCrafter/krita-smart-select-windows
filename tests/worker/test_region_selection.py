@@ -54,7 +54,14 @@ class RegionSelectionTests(unittest.TestCase):
             y = int(round(point[1]))
             if 0 <= x < 8 and 0 <= y < 8 and loaded.crop_region_mask[y * 8 + x] > 0:
                 negative_points_inside_lasso += 1
-        self.assertGreaterEqual(negative_points_inside_lasso, 1)
+        self.assertEqual(negative_points_inside_lasso, 0)
+
+        for point, label in zip(loaded.point_coords, loaded.point_labels, strict=False):
+            if label != 1:
+                continue
+            x = int(round(point[0]))
+            y = int(round(point[1]))
+            self.assertGreater(loaded.crop_region_mask[y * 8 + x], 0)
 
     def test_empty_region_raises(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

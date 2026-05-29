@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -187,54 +188,93 @@ def _prompt_points(
 def _positive_points(
     region_mask: bytes, alpha_mask: bytes, width: int, height: int
 ) -> list[tuple[float, float]]:
-    selected: list[tuple[int, int]] = []
-    sum_x = 0
-    sum_y = 0
+    selected_mask = [
+        region_mask[index] > 0 and alpha_mask[index] > 0 for index in range(width * height)
+    ]
+    selected = _selected_points(region_mask, alpha_mask, width, height)
+    if not selected:
+        return []
+
+    distances = _distance_from_selection_boundary(selected_mask, width, height)
+    ranked = sorted(
+        selected,
+        key=lambda point: (
+            distances[point[1] * width + point[0]],
+            -((point[0] - width / 2.0) ** 2 + (point[1] - height / 2.0) ** 2),
+        ),
+        reverse=True,
+    )
+
+    points: list[tuple[float, float]] = []
+    max_distance = max(distances[y * width + x] for x, y in selected)
+    min_distance = max(1, int(max_distance * 0.45))
+    min_separation = max(4, round(min(width, height) * 0.18))
+    for x, y in ranked:
+        distance = distances[y * width + x]
+        if distance < min_distance and points:
+            continue
+        if any((x - px) ** 2 + (y - py) ** 2 < min_separation**2 for px, py in points):
+            continue
+        points.append((float(x), float(y)))
+        if len(points) >= 5:
+            break
+
+    if not points:
+        x, y = ranked[0]
+        points.append((float(x), float(y)))
+    return points
+
+
+def _distance_from_selection_boundary(
+    selected_mask: Sequence[bool], width: int, height: int
+) -> list[int]:
+    distances = [-1] * len(selected_mask)
+    queue: deque[tuple[int, int]] = deque()
     for y in range(height):
         row_offset = y * width
         for x in range(width):
             index = row_offset + x
-            if region_mask[index] == 0 or alpha_mask[index] == 0:
+            if not selected_mask[index]:
                 continue
-            selected.append((x, y))
-            sum_x += x
-            sum_y += y
-    if not selected:
-        return []
+            if _touches_unselected(selected_mask, width, height, x, y):
+                distances[index] = 1
+                queue.append((x, y))
 
-    points: list[tuple[float, float]] = [
-        (float(round(sum_x / len(selected))), float(round(sum_y / len(selected))))
-    ]
-    for fraction_x, fraction_y in (
-        (0.25, 0.25),
-        (0.50, 0.25),
-        (0.75, 0.25),
-        (0.25, 0.50),
-        (0.75, 0.50),
-        (0.25, 0.75),
-        (0.50, 0.75),
-        (0.75, 0.75),
-    ):
-        candidate = _nearest_selected_point(selected, width, height, fraction_x, fraction_y)
-        if candidate is not None:
-            point = (float(candidate[0]), float(candidate[1]))
-            if point not in points:
-                points.append(point)
-    return points[:9]
+    while queue:
+        x, y = queue.popleft()
+        current = distances[y * width + x]
+        for nx, ny in _neighbors4(width, height, x, y):
+            index = ny * width + nx
+            if not selected_mask[index] or distances[index] >= 0:
+                continue
+            distances[index] = current + 1
+            queue.append((nx, ny))
+
+    for index, selected in enumerate(selected_mask):
+        if selected and distances[index] < 0:
+            distances[index] = 1
+    return distances
 
 
-def _nearest_selected_point(
-    selected: Sequence[tuple[int, int]],
-    width: int,
-    height: int,
-    fraction_x: float,
-    fraction_y: float,
-) -> tuple[int, int] | None:
-    target_x = width * fraction_x
-    target_y = height * fraction_y
-    if not selected:
-        return None
-    return min(selected, key=lambda point: (point[0] - target_x) ** 2 + (point[1] - target_y) ** 2)
+def _touches_unselected(
+    selected_mask: Sequence[bool], width: int, height: int, x: int, y: int
+) -> bool:
+    if x == 0 or y == 0 or x == width - 1 or y == height - 1:
+        return True
+    return any(not selected_mask[ny * width + nx] for nx, ny in _neighbors4(width, height, x, y))
+
+
+def _neighbors4(width: int, height: int, x: int, y: int) -> tuple[tuple[int, int], ...]:
+    neighbors: list[tuple[int, int]] = []
+    if x > 0:
+        neighbors.append((x - 1, y))
+    if x + 1 < width:
+        neighbors.append((x + 1, y))
+    if y > 0:
+        neighbors.append((x, y - 1))
+    if y + 1 < height:
+        neighbors.append((x, y + 1))
+    return tuple(neighbors)
 
 
 def _negative_points(
@@ -248,16 +288,6 @@ def _negative_points(
     y0 = y
     x1 = x + bbox_w - 1
     y1 = y + bbox_h - 1
-    inner_candidates = (
-        (x0, y0),
-        ((x0 + x1) // 2, y0),
-        (x1, y0),
-        (x0, (y0 + y1) // 2),
-        (x1, (y0 + y1) // 2),
-        (x0, y1),
-        ((x0 + x1) // 2, y1),
-        (x1, y1),
-    )
     outer_candidates = (
         (x0 - 8, y0 - 8),
         ((x0 + x1) // 2, y0 - 8),
@@ -269,16 +299,6 @@ def _negative_points(
         (x1 + 8, y1 + 8),
     )
     points: list[tuple[float, float]] = []
-    selected = _selected_points(region_mask, alpha_mask, width, height)
-    for candidate_x, candidate_y in inner_candidates:
-        candidate = _nearest_selected_point(
-            selected, width, height, candidate_x / max(1, width), candidate_y / max(1, height)
-        )
-        if candidate is None:
-            continue
-        point = (float(candidate[0]), float(candidate[1]))
-        if point not in points:
-            points.append(point)
     for candidate_x, candidate_y in outer_candidates:
         px = max(0, min(width - 1, candidate_x))
         py = max(0, min(height - 1, candidate_y))

@@ -8,12 +8,10 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-from model_cache import ModelCache
-from model_registry import all_model_specs
-from refiner_cache import RefinerCache
-from refiner_registry import all_refiner_specs
+from alpha_model_cache import ModelCache
+from alpha_model_registry import all_model_specs
 from runtime_env import runtime_status
-from runtime_manifest import MAM_SOURCE_REF, RUNTIME_VERSION, SAM2_SOURCE_REF
+from runtime_manifest import RUNTIME_VERSION
 
 JsonObject = dict[str, Any]
 
@@ -57,9 +55,8 @@ def _runtime_diagnostics(runtime_cache_dir: Path | None) -> JsonObject:
             "runtime_version": RUNTIME_VERSION,
             "venv_exists": False,
             "python_executable": None,
-            "sam2_source_ref": SAM2_SOURCE_REF,
-            "sam2_importable": False,
             "torch_importable": False,
+            "birefnet_importable": False,
         }
 
     status = runtime_status(runtime_cache_dir)
@@ -69,11 +66,9 @@ def _runtime_diagnostics(runtime_cache_dir: Path | None) -> JsonObject:
         "runtime_version": status.version or RUNTIME_VERSION,
         "venv_exists": status.venv_path.exists(),
         "python_executable": str(status.python_executable),
-        "sam2_source_ref": status.sam2_source_ref or SAM2_SOURCE_REF,
-        "cuda_home": marker.get("cuda_home"),
-        "sam2_cuda_extension": marker.get("sam2_cuda_extension", False),
-        "sam2_importable": False,
         "torch_importable": False,
+        "birefnet_importable": False,
+        "cuda_available": marker.get("cuda_available", False),
     }
 
 
@@ -88,42 +83,22 @@ def _runtime_marker(path: Path) -> JsonObject:
 def collect_runtime_diagnostics(
     model_cache_dir: Path | None,
     runtime_cache_dir: Path | None = None,
-    refiner_cache_dir: Path | None = None,
 ) -> JsonObject:
     models: list[JsonObject] = []
     cache = ModelCache(model_cache_dir) if model_cache_dir is not None else None
     for model_spec in all_model_specs():
-        if model_spec.id == "mock":
-            continue
         model_status = cache.status(model_spec) if cache is not None else None
         models.append(
             {
                 "id": model_spec.id,
                 "title": model_spec.title,
                 "cache_state": model_status.state if model_status is not None else "missing",
-                "expected_bytes": model_spec.expected_bytes,
-                "actual_bytes": model_status.actual_bytes if model_status is not None else None,
-            }
-        )
-
-    refiners: list[JsonObject] = []
-    refiner_cache = RefinerCache(refiner_cache_dir) if refiner_cache_dir is not None else None
-    for refiner_spec in all_refiner_specs():
-        refiner_status = refiner_cache.status(refiner_spec) if refiner_cache is not None else None
-        refiners.append(
-            {
-                "id": refiner_spec.id,
-                "title": refiner_spec.title,
-                "cache_state": refiner_status.state if refiner_status is not None else "missing",
-                "source_ref": refiner_spec.source_ref,
-                "sam_expected_bytes": refiner_spec.sam_expected_bytes,
-                "sam_actual_bytes": (
-                    refiner_status.sam_actual_bytes if refiner_status is not None else None
+                "checkpoint_expected_bytes": model_spec.checkpoint_expected_bytes,
+                "checkpoint_actual_bytes": (
+                    model_status.checkpoint_bytes if model_status is not None else None
                 ),
-                "mam_expected_bytes": refiner_spec.mam_expected_bytes,
-                "mam_actual_bytes": (
-                    refiner_status.mam_actual_bytes if refiner_status is not None else None
-                ),
+                "repo_id": model_spec.repo_id,
+                "revision": model_spec.revision,
             }
         )
 
@@ -138,9 +113,5 @@ def collect_runtime_diagnostics(
         },
         "torch": _torch_diagnostics(),
         "runtime": _runtime_diagnostics(runtime_cache_dir),
-        "mam": {
-            "source_ref": MAM_SOURCE_REF,
-        },
         "models": models,
-        "refiners": refiners,
     }

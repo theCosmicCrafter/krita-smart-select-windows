@@ -84,13 +84,6 @@ void WorkerClient::stop()
     }
 }
 
-int WorkerClient::prepareSegments(const PrepareSegmentsRequest& prepareRequest)
-{
-    const int id = m_nextId++;
-    send(prepareSegmentsRequestJson(id, prepareRequest));
-    return id;
-}
-
 int WorkerClient::prepareSelection(const PrepareSelectionRequest& prepareRequest)
 {
     const int id = m_nextId++;
@@ -128,6 +121,12 @@ void WorkerClient::readStdout()
         QJsonParseError parseError;
         const QJsonDocument document = QJsonDocument::fromJson(line, &parseError);
         if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+            logSmartSelectEvent(SmartSelectLogLevel::Warning,
+                QStringLiteral("worker.protocol.invalid_line"),
+                { { QStringLiteral("error.type"), QStringLiteral("ProtocolError") },
+                    { QStringLiteral("error.message"), parseError.errorString() },
+                    { QStringLiteral("protocol.line.prefix"),
+                        QString::fromUtf8(line.left(240)) } });
             Q_EMIT error(0, "ProtocolError", parseError.errorString());
             continue;
         }
@@ -178,7 +177,7 @@ void WorkerClient::handleMessage(const QJsonObject& message)
     if (message.contains("result")) {
         const QJsonObject resultObject = message.value("result").toObject();
         if (resultObject.contains(QStringLiteral("model"))) {
-            logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("inference.result.model"),
+            logSmartSelectEvent(SmartSelectLogLevel::Info, QStringLiteral("selection.result.model"),
                 { { QStringLiteral("job.id"), id },
                     { QStringLiteral("model.payload"),
                         QString::fromUtf8(
@@ -187,34 +186,22 @@ void WorkerClient::handleMessage(const QJsonObject& message)
         }
         if (resultObject.contains(QStringLiteral("runtime"))) {
             logSmartSelectEvent(SmartSelectLogLevel::Info,
-                QStringLiteral("inference.result.runtime"),
+                QStringLiteral("selection.result.runtime"),
                 { { QStringLiteral("job.id"), id },
                     { QStringLiteral("runtime.payload"),
                         QString::fromUtf8(
                             QJsonDocument(resultObject.value(QStringLiteral("runtime")).toObject())
                                 .toJson(QJsonDocument::Compact)) } });
         }
-        if (resultObject.contains(QStringLiteral("refiner"))) {
-            logSmartSelectEvent(SmartSelectLogLevel::Info,
-                QStringLiteral("inference.result.refiner"),
-                { { QStringLiteral("job.id"), id },
-                    { QStringLiteral("refiner.payload"),
-                        QString::fromUtf8(
-                            QJsonDocument(resultObject.value(QStringLiteral("refiner")).toObject())
-                                .toJson(QJsonDocument::Compact)) } });
-        }
         const QString selectionMaskPath
             = resultObject.value(QStringLiteral("selection_mask_path")).toString();
         if (!selectionMaskPath.isEmpty()) {
             Q_EMIT selectionResult(id, selectionMaskPath,
-                resultObject.value("segments_path").toString(),
-                resultObject.value("metadata").toArray());
+                resultObject.value(QStringLiteral("metadata")).toArray());
             return;
         }
 
-        Q_EMIT result(id, resultObject.value("segment_map_path").toString(),
-            resultObject.value("segments_path").toString(),
-            resultObject.value("metadata").toArray());
+        Q_EMIT error(id, "ProtocolError", "Smart Select worker returned no selection mask");
         return;
     }
 
