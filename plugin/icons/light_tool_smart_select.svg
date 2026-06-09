@@ -1,7 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <g fill="none" stroke="#d2d2d2" stroke-width="1" stroke-linecap="square" stroke-linejoin="miter">
-    <path d="M0.5 0.5h15v15h-15z"/>
-    <path d="M4.25 4.25h7.5v7.5h-7.5z" stroke-dasharray="1 1"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16.00 16.00" data-guides="{&quot;vertical&quot;:[],&quot;horizontal&quot;:[]}"><defs/><path fill="transparent" stroke="#d2d2d2" fill-opacity="1" stroke-width="1" stroke-opacity="1" title="Rectangle 1" d="M1 1C1 1 1 1 1 1H15C15 1 15 1 15 1V15C15 15 15 15 15 15H1C1 15 1 15 1 15Z" id="tSvg12e5e736f4d" stroke-dasharray="2"/><path fill="transparent" stroke="#d2d2d2" fill-opacity="1" stroke-width="1" stroke-opacity="1" alignment-baseline="baseline" id="tSvg134d4415612" title="Rectangle 1" d="M4 3.9998C6.6667 3.9998 9.3333 3.9998 12 3.9998C12 6.6665 12 9.333 12 11.9998C9.3333 11.9998 6.6667 11.9998 4 11.9998C4 9.333 4 6.6665 4 3.9998Z" style="transform-origin: -14992px -14992px 0px;"/></svg>
