@@ -3,6 +3,9 @@
 Krita Smart Select is a Linux plugin for Krita 5.3.1 that creates soft
 AI-assisted selections from a user-drawn region.
 
+It is designed as a local Krita AI selection, object selection and alpha
+matting plugin for digital artists.
+
 The tool works like a native lasso selection tool first: draw or adjust the
 area around an object, then press `Select object with AI`. The worker runs
 BiRefNet HR Matting on the selected crop and applies the returned soft alpha as
