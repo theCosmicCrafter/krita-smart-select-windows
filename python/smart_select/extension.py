@@ -67,16 +67,39 @@ class SmartSelectExtension(Extension):
                 "package.dir": str(package_dir),
             },
         )
+        if sys.platform.startswith("win"):
+            lib_ext = ".dll"
+            lib_prefix = ""
+        elif sys.platform == "darwin":
+            lib_ext = ".dylib"
+            lib_prefix = "lib"
+        else:
+            lib_ext = ".so"
+            lib_prefix = "lib"
+
         candidates = [
-            lib_dir / "kritasmartselect.so",
-            lib_dir / "libkritasmartselect.so",
-            package_dir / "kritasmartselect.so",
-            package_dir / "libkritasmartselect.so",
+            lib_dir / f"{lib_prefix}kritasmartselect{lib_ext}",
+            lib_dir / f"kritasmartselect{lib_ext}",
+            package_dir / f"{lib_prefix}kritasmartselect{lib_ext}",
+            package_dir / f"kritasmartselect{lib_ext}",
         ]
+        # Also keep the bare .so names as fallbacks for backwards compatibility
+        candidates.extend(
+            [
+                lib_dir / "kritasmartselect.so",
+                lib_dir / "libkritasmartselect.so",
+                package_dir / "kritasmartselect.so",
+                package_dir / "libkritasmartselect.so",
+            ]
+        )
 
         if sys.platform.startswith("linux"):
             existing = os.environ.get("LD_LIBRARY_PATH", "")
             os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{existing}" if existing else str(lib_dir)
+        elif sys.platform == "win":
+            # On Windows, prepend the lib dir to PATH so dependent DLLs resolve
+            existing = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{lib_dir}{os.pathsep}{existing}" if existing else str(lib_dir)
 
         for candidate in candidates:
             if candidate.exists():

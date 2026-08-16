@@ -53,7 +53,9 @@ def main() -> NoReturn:
             file=sys.stderr,
             flush=True,
         )
-        os.execvp("python3", ["python3", *sys.argv[1:]])
+        # On Windows there is no python3, use python or sys.executable
+        python_bin = shutil.which("python3") or shutil.which("python") or sys.executable
+        os.execvp(python_bin, [python_bin, *sys.argv[1:]])
 
     print(
         format_log_event(
@@ -112,14 +114,27 @@ def _detect_cuda_home(env: dict[str, str]) -> Path | None:
         if value and _is_cuda_home(Path(value)):
             return Path(value)
 
-    for candidate in (
-        Path("/usr/local/cuda-12.4"),
-        Path("/usr/local/cuda"),
-        Path.home() / ".local/share/krita/smart_select/cuda-12.4",
-        Path.home() / "miniconda3",
-    ):
-        if _is_cuda_home(candidate):
-            return candidate
+    if sys.platform.startswith("win"):
+        # Windows CUDA is typically installed under Program Files
+        program_files = env.get("ProgramFiles", r"C:\Program Files")
+        for candidate in (
+            Path(program_files) / "NVIDIA GPU Computing Toolkit" / "CUDA" / "v12.4",
+            Path(program_files) / "NVIDIA GPU Computing Toolkit" / "CUDA" / "v12.6",
+            Path(program_files) / "NVIDIA GPU Computing Toolkit" / "CUDA" / "v13.0",
+            Path(program_files) / "NVIDIA GPU Computing Toolkit" / "CUDA" / "v13.2",
+            Path(program_files) / "NVIDIA GPU Computing Toolkit" / "CUDA" / "v13.3",
+        ):
+            if _is_cuda_home(candidate):
+                return candidate
+    else:
+        for candidate in (
+            Path("/usr/local/cuda-12.4"),
+            Path("/usr/local/cuda"),
+            Path.home() / ".local/share/krita/smart_select/cuda-12.4",
+            Path.home() / "miniconda3",
+        ):
+            if _is_cuda_home(candidate):
+                return candidate
 
     nvcc = shutil.which("nvcc", path=env.get("PATH"))
     if nvcc is None:
@@ -129,6 +144,11 @@ def _detect_cuda_home(env: dict[str, str]) -> Path | None:
 
 
 def _is_cuda_home(path: Path) -> bool:
+    if sys.platform.startswith("win"):
+        # On Windows, nvcc is nvcc.exe and libs are under lib/x64
+        return (path / "bin" / "nvcc.exe").exists() and (
+            (path / "lib" / "x64").exists() or (path / "lib").exists()
+        )
     return (path / "bin" / "nvcc").exists() and (
         (path / "lib64").exists() or (path / "lib").exists()
     )

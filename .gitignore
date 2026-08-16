@@ -6,6 +6,7 @@ __pycache__/
 
 # Local build/package output
 build/
+build-windows/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
@@ -14,6 +15,7 @@ compile_commands.json
 install_manifest.txt
 dist/
 *.so
+*.dll
 *.o
 *.a
 

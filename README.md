@@ -1,6 +1,40 @@
-# Krita Smart Select
+# Krita Smart Select for Windows
 
-Krita Smart Select is a Linux plugin for Krita 5.3.1 that creates soft
+A Windows port of [Krita Smart Select](https://github.com/BMFreed/krita-smart-select)
+— an AI-assisted lasso selection plugin for Krita that creates soft alpha object
+masks locally using BiRefNet HR Matting.
+
+This is a **sister project**, not a fork-and-replace. The original project by
+[BMFreed](https://github.com/BMFreed) targets Linux + Krita 5.3.1. This project
+adds Windows build support, native DLL packaging, and cross-platform Python
+fixes while keeping the C++ plugin source and worker code in sync with upstream.
+
+## Relationship to Upstream
+
+| | Upstream (BMFreed) | This project |
+| --- | --- | --- |
+| **Platform** | Linux | Windows |
+| **Compiler** | GCC | LLVM-MinGW Clang 21 |
+| **Qt/Krita deps** | System packages | KDE CI artifact cache |
+| **Native artifact** | `kritasmartselect.so` | `kritasmartselect.dll` |
+| **Runtime DLLs** | — | `libc++.dll`, `libunwind.dll`, `libwinpthread-1.dll` |
+| **License** | GPL-3.0-only | GPL-3.0-only (same) |
+
+**Shared code** (kept in sync with upstream):
+- C++ plugin source (`plugin/`)
+- Python worker (`worker/`)
+- Worker protocol, model config, docs
+
+**Windows-specific** (this project only):
+- `scripts/build-windows.bat` — Windows build script
+- `scripts/package-windows.ps1` — Windows release packaging
+- `docs/windows/build.md` — Windows build documentation
+- Cross-platform fixes in `python/smart_select/extension.py` and
+  `python/smart_select/worker_launcher.py`
+
+## How It Works
+
+Krita Smart Select is a plugin for Krita 5.3.x that creates soft
 AI-assisted selections from a user-drawn region.
 
 It is designed as a local Krita AI selection, object selection and alpha
@@ -50,8 +84,8 @@ hard binary cutout.
 
 For users:
 
-- Linux.
-- Krita 5.3.1.
+- Windows 10/11 (x64) or Linux.
+- Krita 5.3.x.
 - `uv` available in `PATH`.
 - Network access for the first runtime and model download.
 - NVIDIA driver with CUDA support for GPU inference, or CPU fallback when CUDA
@@ -60,9 +94,10 @@ For users:
 
 For development:
 
-- CMake.
-- C++20 compiler.
-- Krita 5.3.1 source tree and build tree.
+- CMake 3.21+.
+- C++20 compiler (GCC on Linux, LLVM-MinGW Clang 21 on Windows).
+- Krita 5.3.x source tree and build tree.
+- On Windows: KDE Craft + krita-deps-management for Qt5 dependencies.
 - Qt5/KF5/Krita development dependencies required by that Krita build.
 - Python with `uv`.
 - `clang-format`.
@@ -78,10 +113,12 @@ inside the plugin source tree. Runtime data is stored under Krita user data:
 
 ## User Installation
 
-Download the Linux release ZIP:
+### Windows
+
+Download the Windows release ZIP:
 
 ```text
-krita-smart-select-linux-x64-<version>.zip
+krita-smart-select-windows-x64-<version>.zip
 ```
 
 Install it from Krita:
@@ -90,18 +127,33 @@ Install it from Krita:
 2. Select the release ZIP.
 3. Restart Krita.
 4. Enable `Smart Select` in the Python Plugin Manager if needed.
-5. Select `Smart Select` from the toolbox.
+5. Select `Smart Select` from the toolbox (it appears in the Select section
+   alongside the other selection tools).
 
-The ZIP root contains the Python plugin descriptor and package:
+The ZIP root contains the Python plugin package:
 
 ```text
-smart_select.desktop
 smart_select/
-  SmartSelectTool.action
-  lib/kritasmartselect.so
-  worker/
-  ...
+  __init__.py
+  extension.py
+  worker_launcher.py
+  lib/
+    kritasmartselect.dll
+    libc++.dll
+    libunwind.dll
+    libwinpthread-1.dll
 ```
+
+### Linux
+
+Download the Linux release ZIP from the
+[upstream project](https://github.com/BMFreed/krita-smart-select/releases):
+
+```text
+krita-smart-select-linux-x64-<version>.zip
+```
+
+Install via the same Krita import flow.
 
 On first use, draw or edit a region, press `Select object with AI`, and let the
 worker create the runtime and download the model.

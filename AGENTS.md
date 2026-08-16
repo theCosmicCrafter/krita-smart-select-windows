@@ -16,7 +16,9 @@ Short guide for agents working on Krita Smart Select.
 
 ## Baseline Decisions
 
-- Target: Linux + Krita 5.3.1.
+- Target: Linux + Krita 5.3.1 (upstream), Windows + Krita 5.3.x (this project).
+- Windows compiler: LLVM-MinGW Clang 21 (matches KDE CI dependency ABI).
+- Windows deps: KDE CI artifact cache via krita-deps-management.
 - Canvas/tool layer: native C++ Krita tool.
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
