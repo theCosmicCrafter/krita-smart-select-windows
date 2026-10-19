@@ -153,6 +153,26 @@ class SmartSelectWorkerTests(unittest.TestCase):
 
         self.assertEqual(self.messages[-1]["error"]["type"], "InferenceOutOfMemory")
 
+    def test_unsupported_gpu_error_names_the_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+
+            def run() -> None:
+                original_predict = smart_select_worker.birefnet_inference.predict_alpha
+                try:
+                    smart_select_worker.birefnet_inference.predict_alpha = (
+                        self._raise_unsupported_gpu
+                    )
+                    self._run_prepare_selection(temp)
+                finally:
+                    smart_select_worker.birefnet_inference.predict_alpha = original_predict
+
+            self._with_fake_pipeline(temp, run, patch_predict=False)
+
+        error = self.messages[-1]["error"]
+        self.assertEqual(error["type"], "InferenceUnsupportedGpu")
+        self.assertIn("Fake GPU", error["message"])
+
     def test_cancel_before_inference_emits_no_success(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)
@@ -333,6 +353,12 @@ class SmartSelectWorkerTests(unittest.TestCase):
     def _raise_oom(*_args: Any, **_kwargs: Any) -> birefnet_inference.BiRefNetResult:
         raise smart_select_worker.birefnet_inference.InferenceOutOfMemory(
             "alpha extraction ran out of GPU memory"
+        )
+
+    @staticmethod
+    def _raise_unsupported_gpu(*_args: Any, **_kwargs: Any) -> birefnet_inference.BiRefNetResult:
+        raise smart_select_worker.birefnet_inference.InferenceUnsupportedGpu(
+            "Fake GPU (compute capability 12.0) is not supported by the installed PyTorch"
         )
 
     @staticmethod

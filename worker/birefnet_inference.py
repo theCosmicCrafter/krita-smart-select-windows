@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import importlib
+import re
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -25,6 +26,10 @@ class InferenceFailed(BiRefNetInferenceError):
     pass
 
 
+class InferenceUnsupportedGpu(BiRefNetInferenceError):
+    pass
+
+
 @dataclass(frozen=True)
 class BiRefNetResult:
     crop_alpha: bytes
@@ -37,6 +42,45 @@ class BiRefNetResult:
 
 
 _MODEL_CACHE: dict[tuple[str, str, str], Any] = {}
+
+_SM_ARCH = re.compile(r"sm_(\d+)[a-z]?")
+
+
+@dataclass(frozen=True)
+class CudaDevice:
+    name: str
+    capability: tuple[int, int]
+    arch_list: tuple[str, ...]
+
+    @property
+    def compute_capability(self) -> str:
+        return f"{self.capability[0]}.{self.capability[1]}"
+
+    @property
+    def supported(self) -> bool:
+        """Whether the installed torch ships kernels for this GPU.
+
+        Same rule as torch's own warning: NVIDIA architectures are only compatible
+        within a major version, so e.g. an sm_120 GPU needs an sm_12x build. A torch
+        build without any `sm_` entry (PTX only) cannot be judged and counts as supported.
+        """
+        supported_majors = {
+            int(match.group(1)) // 10
+            for arch in self.arch_list
+            if (match := _SM_ARCH.fullmatch(arch))
+        }
+        return not supported_majors or self.capability[0] in supported_majors
+
+
+def cuda_device(torch: Any) -> CudaDevice | None:
+    """Describe CUDA device 0, or None when torch cannot be asked."""
+    try:
+        major, minor = (int(value) for value in torch.cuda.get_device_capability(0))
+        arch_list = tuple(str(arch) for arch in torch.cuda.get_arch_list())
+        name = str(torch.cuda.get_device_name(0))
+    except Exception:
+        return None
+    return CudaDevice(name, (major, minor), arch_list)
 
 
 def release_runtime_memory() -> None:
@@ -105,6 +149,8 @@ def predict_alpha(
 
     cuda_available = bool(torch.cuda.is_available())
     device = "cuda" if cuda_available else "cpu"
+    if cuda_available:
+        _require_supported_gpu(torch)
     crop_image = image_module.fromarray(crop_image_array).convert("RGB")
     width, height = crop_image.size
 
@@ -130,11 +176,22 @@ def predict_alpha(
             prediction = model(image_tensor)[-1].sigmoid().detach().cpu()
         duration_ms = round((time.monotonic() - started) * 1000)
     except RuntimeError as exc:
-        if "out of memory" in str(exc).lower():
+        message = str(exc).lower()
+        if "out of memory" in message:
+            _log_predict_failed(spec, device, exc)
             raise InferenceOutOfMemory("alpha extraction ran out of GPU memory") from exc
-        raise InferenceFailed("alpha extraction failed") from exc
+        if "no kernel image" in message:
+            # CUDA could not run the model on this GPU even though the arch check passed.
+            _log_predict_failed(spec, device, exc)
+            raise InferenceUnsupportedGpu(
+                "the installed PyTorch has no CUDA kernels for this GPU"
+                f" (torch {torch.__version__})"
+            ) from exc
+        _log_predict_failed(spec, device, exc)
+        raise InferenceFailed(f"alpha extraction failed ({device}, {type(exc).__name__})") from exc
     except Exception as exc:
-        raise InferenceFailed("alpha extraction failed") from exc
+        _log_predict_failed(spec, device, exc)
+        raise InferenceFailed(f"alpha extraction failed ({device}, {type(exc).__name__})") from exc
 
     pred = prediction[0].squeeze().float()
     pred_image = transforms.ToPILImage()(pred)
@@ -161,6 +218,48 @@ def predict_alpha(
         torch_version=str(torch.__version__),
         cuda_available=cuda_available,
         duration_ms=duration_ms,
+    )
+
+
+def _require_supported_gpu(torch: Any) -> None:
+    device = cuda_device(torch)
+    if device is None:
+        return
+    fields: dict[str, object] = {
+        "device.type": "cuda",
+        "device.name": device.name,
+        "device.compute_capability": device.compute_capability,
+        "torch.version": str(torch.__version__),
+        "torch.cuda.arch_list": list(device.arch_list),
+    }
+    if device.supported:
+        log_event("alpha_model.cuda.checked", component="birefnet", **fields)
+        return
+    log_event(
+        "alpha_model.cuda.incompatible",
+        severity="error",
+        component="birefnet",
+        **fields,
+        **{"error.type": "InferenceUnsupportedGpu", "error.reason": "cuda_arch_not_supported"},
+    )
+    raise InferenceUnsupportedGpu(
+        f"{device.name} (compute capability {device.compute_capability}) is not supported by"
+        f" the installed PyTorch {torch.__version__} (built for {' '.join(device.arch_list)});"
+        " the runtime needs a PyTorch build with CUDA 12.8 or newer"
+    )
+
+
+def _log_predict_failed(spec: ModelSpec, device: str, exc: Exception) -> None:
+    log_event(
+        "alpha_model.predict.failed",
+        severity="error",
+        component="birefnet",
+        **{
+            "model.id": spec.id,
+            "device.type": device,
+            "error.type": type(exc).__name__,
+            "error.message": str(exc)[:500],
+        },
     )
 
 

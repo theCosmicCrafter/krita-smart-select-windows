@@ -398,6 +398,8 @@ def error_type_for_model_cache_error(exc: ModelCacheError) -> str:
 def error_type_for_inference_error(exc: birefnet_inference.BiRefNetInferenceError) -> str:
     if isinstance(exc, birefnet_inference.InferenceOutOfMemory):
         return "InferenceOutOfMemory"
+    if isinstance(exc, birefnet_inference.InferenceUnsupportedGpu):
+        return "InferenceUnsupportedGpu"
     return "InferenceFailed"
 
 

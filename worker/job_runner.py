@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 import traceback
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,12 +30,66 @@ class JobContext:
         self.cancel_event.set()
         with self.lock:
             process = self.active_process
-        if process is not None and process.poll() is None:
-            process.terminate()
+        if process is not None:
+            self._stop_process(process)
 
     def set_active_process(self, process: subprocess.Popen[Any] | None) -> None:
         with self.lock:
             self.active_process = process
+            cancelled = process is not None and self.cancel_event.is_set()
+        if process is not None and cancelled:
+            # cancel() ran between the process being started and being registered
+            self._stop_process(process)
+
+    def _stop_process(self, process: subprocess.Popen[Any]) -> None:
+        if process.poll() is not None:
+            return
+        method, result = terminate_process_tree(process)
+        log_event(
+            "worker.job.process.terminated",
+            component="job_runner",
+            **{
+                "job.id": self.job_id,
+                "job.type": self.job_type,
+                "process.pid": process.pid,
+                "process.terminate.method": method,
+                "process.terminate.result": result,
+            },
+        )
+
+
+def terminate_process_tree(process: subprocess.Popen[Any]) -> tuple[str, int | None]:
+    """Stop `process`; on Windows also everything it started.
+
+    Returns the method used and its result (the exit code of `taskkill`, if used).
+    On Windows `venv\\Scripts\\python.exe` is a launcher stub that runs the real
+    interpreter as a child, so terminating only the stub leaves e.g. `pip` running and
+    holding the output pipe open until it finishes. `taskkill /T` walks the child
+    processes; it fails harmlessly when the process is already gone.
+    """
+    if sys.platform.startswith("win"):
+        taskkill = os.path.join(
+            os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "taskkill.exe"
+        )
+        returncode: int | None
+        try:
+            returncode = subprocess.run(
+                [taskkill, "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=15,
+                check=False,
+            ).returncode
+        except (OSError, subprocess.SubprocessError):
+            returncode = None
+        if process.poll() is None:
+            # taskkill missing or failed: at least stop the process we started
+            with suppress(OSError):
+                process.kill()
+        return "taskkill_tree", returncode
+    else:
+        process.terminate()
+        return "terminate", None
 
 
 JobTarget = Callable[[JobContext, Mapping[str, Any]], None]

@@ -14,10 +14,10 @@ fixes while keeping the C++ plugin source and worker code in sync with upstream.
 | | Upstream (BMFreed) | This project |
 | --- | --- | --- |
 | **Platform** | Linux | Windows |
-| **Compiler** | GCC | LLVM-MinGW Clang 21 |
+| **Compiler** | GCC | LLVM-MinGW Clang 21 (UCRT) |
 | **Qt/Krita deps** | System packages | KDE CI artifact cache |
 | **Native artifact** | `kritasmartselect.so` | `kritasmartselect.dll` |
-| **Runtime DLLs** | — | `libc++.dll`, `libunwind.dll`, `libwinpthread-1.dll` |
+| **Runtime DLLs** | — | Taken from the Krita installation (not bundled) |
 | **License** | GPL-3.0-only | GPL-3.0-only (same) |
 
 **Shared code** (kept in sync with upstream):
@@ -27,8 +27,11 @@ fixes while keeping the C++ plugin source and worker code in sync with upstream.
 
 **Windows-specific** (this project only):
 - `scripts/build-windows.bat` — Windows build script
+- `scripts/link-plugin-windows.ps1` — wires the plugin into a Krita source tree
 - `scripts/package-windows.ps1` — Windows release packaging
 - `docs/windows/build.md` — Windows build documentation
+- `python/smart_select/worker_launcher.cmd` — Windows worker entry point, runs
+  the worker through `uv` (see [docs/runtime-env.md](docs/runtime-env.md))
 - Cross-platform fixes in `python/smart_select/extension.py` and
   `python/smart_select/worker_launcher.py`
 
@@ -86,10 +89,12 @@ For users:
 
 - Windows 10/11 (x64) or Linux.
 - Krita 5.3.x.
-- `uv` available in `PATH`.
+- `uv` available in `PATH`. On Windows it is required: the worker runs on a
+  Python 3.12 that `uv` provides, no separate Python install is needed.
 - Network access for the first runtime and model download.
-- NVIDIA driver with CUDA support for GPU inference, or CPU fallback when CUDA
-  is unavailable.
+- NVIDIA driver with CUDA support for GPU inference (Blackwell GPUs such as the
+  RTX 50 series get a CUDA 12.8 PyTorch build automatically), or CPU fallback when
+  CUDA is unavailable.
 - Enough free disk space for the managed runtime and model cache.
 
 For development:
@@ -97,7 +102,8 @@ For development:
 - CMake 3.21+.
 - C++20 compiler (GCC on Linux, LLVM-MinGW Clang 21 on Windows).
 - Krita 5.3.x source tree and build tree.
-- On Windows: KDE Craft + krita-deps-management for Qt5 dependencies.
+- On Windows: krita-deps-management for the Qt5 dependency cache, see
+  [docs/windows/build.md](docs/windows/build.md).
 - Qt5/KF5/Krita development dependencies required by that Krita build.
 - Python with `uv`.
 - `clang-format`.
@@ -130,19 +136,30 @@ Install it from Krita:
 5. Select `Smart Select` from the toolbox (it appears in the Select section
    alongside the other selection tools).
 
-The ZIP root contains the Python plugin package:
+The ZIP root contains the Python plugin descriptor and package:
 
 ```text
+smart_select.desktop
+smart_select.action
 smart_select/
   __init__.py
   extension.py
   worker_launcher.py
+  worker_launcher.cmd
+  worker/
+    *.py
   lib/
     kritasmartselect.dll
-    libc++.dll
-    libunwind.dll
-    libwinpthread-1.dll
 ```
+
+Krita's importer only recognizes a module when the archive contains an explicit
+`smart_select/` directory entry, and it installs `smart_select.action` into the
+`actions` directory of the Krita user data, so the ZIP is created by
+`scripts/package-windows.ps1` rather than a generic zip tool.
+
+`kritasmartselect.dll` is built against Krita 5.3.4 (Qt5) and resolves
+`libc++.dll`, `libunwind.dll`, Qt, KF5 and Krita libraries from the Krita
+installation that loads it, so use it with a matching Krita 5.3.x build.
 
 ### Linux
 

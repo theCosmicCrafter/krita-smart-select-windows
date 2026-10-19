@@ -49,6 +49,14 @@ Preferred dotted fields:
 - `runtime.version`
 - `runtime.cache.state`
 - `device.type`
+- `device.name`
+- `device.compute_capability`
+- `torch.version`
+- `torch.index`
+- `torch.cuda.arch_list`
+- `process.pid`
+- `process.terminate.method`
+- `process.terminate.result`
 - `cuda.available`
 - `duration_ms`
 - `image.width`
@@ -107,6 +115,9 @@ C++ events:
 Worker events:
 
 - `runtime.setup.result`
+- `worker.job.process.terminated`
+- `runtime.torch_index.selected`
+- `runtime.torch_index.changed`
 - `alpha_model.cache.start`
 - `alpha_model.cache.result`
 - `alpha_model.cache.failed`
@@ -115,6 +126,8 @@ Worker events:
 - `alpha_model.predict.start`
 - `alpha_model.predict.result`
 - `alpha_model.predict.failed`
+- `alpha_model.cuda.checked`
+- `alpha_model.cuda.incompatible`
 - `alpha_model.memory.released`
 - `alpha_mask.result`
 - `selection.debug_export.result`

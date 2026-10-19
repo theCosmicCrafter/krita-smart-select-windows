@@ -55,6 +55,7 @@ def _runtime_diagnostics(runtime_cache_dir: Path | None) -> JsonObject:
             "runtime_version": RUNTIME_VERSION,
             "venv_exists": False,
             "python_executable": None,
+            "torch_index": None,
             "torch_importable": False,
             "birefnet_importable": False,
         }
@@ -66,6 +67,7 @@ def _runtime_diagnostics(runtime_cache_dir: Path | None) -> JsonObject:
         "runtime_version": status.version or RUNTIME_VERSION,
         "venv_exists": status.venv_path.exists(),
         "python_executable": str(status.python_executable),
+        "torch_index": status.torch_index,
         "torch_importable": False,
         "birefnet_importable": False,
         "cuda_available": marker.get("cuda_available", False),
