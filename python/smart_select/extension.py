@@ -96,8 +96,11 @@ class SmartSelectExtension(Extension):
         if sys.platform.startswith("linux"):
             existing = os.environ.get("LD_LIBRARY_PATH", "")
             os.environ["LD_LIBRARY_PATH"] = f"{lib_dir}:{existing}" if existing else str(lib_dir)
-        elif sys.platform == "win":
-            # On Windows, prepend the lib dir to PATH so dependent DLLs resolve
+        elif sys.platform.startswith("win"):
+            # Python 3.8+ ignores PATH when ctypes resolves DLL dependencies, so
+            # register the lib dir explicitly and keep PATH for child processes.
+            if hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(str(lib_dir))
             existing = os.environ.get("PATH", "")
             os.environ["PATH"] = f"{lib_dir}{os.pathsep}{existing}" if existing else str(lib_dir)
 
@@ -140,7 +143,13 @@ class SmartSelectExtension(Extension):
 
 
 def _worker_executable(package_dir: Path) -> str:
-    launcher = package_dir / "worker_launcher.py"
-    if launcher.exists() and shutil.which("uv") is not None:
-        return str(launcher)
-    return shutil.which("python3") or sys.executable
+    if sys.platform.startswith("win"):
+        # QProcess cannot start a .py file on Windows and sys.executable is
+        # krita.exe, not an interpreter. The batch entry point runs the worker
+        # through uv instead, see worker_launcher.cmd.
+        return str(package_dir / "worker_launcher.cmd")
+    else:
+        launcher = package_dir / "worker_launcher.py"
+        if launcher.exists() and shutil.which("uv") is not None:
+            return str(launcher)
+        return shutil.which("python3") or sys.executable

@@ -3,6 +3,10 @@ from __future__ import annotations
 RUNTIME_VERSION = "birefnet-runtime-v1"
 RUNTIME_PYTHON_VERSION = "3.12"
 TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu124"
+# Blackwell GPUs (compute capability 10.0+, e.g. RTX 50xx) need CUDA 12.8 builds;
+# the cu124 wheels have no kernels for them.
+TORCH_INDEX_URL_BLACKWELL = "https://download.pytorch.org/whl/cu128"
+BLACKWELL_MIN_COMPUTE_CAPABILITY = (10, 0)
 
 TORCH_PACKAGES = ("torch>=2.5.1,<3", "torchvision>=0.20.1,<1")
 PYTHON_PACKAGES = (

@@ -594,7 +594,7 @@ void SmartSelectTool::updateOptionsUi()
             text = i18n("Select the area around the object, then press the button below.");
             break;
         case State::Preparing:
-            text = i18n("Select the area around the object, then press the button below.");
+            text = m_stageText.isEmpty() ? i18n("Preparing...") : friendlyStageText(m_stageText);
             break;
         case State::Ready:
             text = i18n("Select the area around the object, then press the button below.");
@@ -858,7 +858,12 @@ QWidget *SmartSelectTool::createOptionWidget()
     connect(m_runButton, &QPushButton::clicked, this,
         &SmartSelectTool::startSelectionJobFromCurrentSelection);
     m_cancelButton = new QPushButton(i18n("Cancel"));
-    connect(m_cancelButton, &QPushButton::clicked, this, &SmartSelectTool::cancelActiveJob);
+    connect(m_cancelButton, &QPushButton::clicked, this, [this]() {
+        // The worker answers the cancelled job with an id that is no longer active, so
+        // that reply is ignored as stale; leave the Preparing state here.
+        cancelActiveJob();
+        setState(State::Cancelled);
+    });
 
     sectionStatus->appendWidget(QStringLiteral("statusLabel"), m_statusLabel);
     sectionStatus->appendWidget(QStringLiteral("runButton"), m_runButton);

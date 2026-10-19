@@ -17,11 +17,15 @@ Short guide for agents working on Krita Smart Select.
 ## Baseline Decisions
 
 - Target: Linux + Krita 5.3.1 (upstream), Windows + Krita 5.3.x (this project).
-- Windows compiler: LLVM-MinGW Clang 21 (matches KDE CI dependency ABI).
+- Windows compiler: LLVM-MinGW Clang 21, UCRT flavour (matches KDE CI
+  dependency ABI and the CRT of the official Krita build).
 - Windows deps: KDE CI artifact cache via krita-deps-management.
 - Canvas/tool layer: native C++ Krita tool.
 - Python layer: loader wrapper and worker process.
 - Worker transport: `QProcess` + stdio NDJSON.
+- Worker launch: `worker_launcher.py` on Linux, `worker_launcher.cmd` on Windows
+  (QProcess cannot start `.py` files there; both run the worker via
+  `uv run --python 3.12`), see `docs/runtime-env.md`.
 - Large data transport: temporary files, not JSON.
 - Current primary flow: lasso-driven alpha selection with explicit `Select
   object with AI` action.
@@ -38,6 +42,10 @@ Short guide for agents working on Krita Smart Select.
   selection as the region mask.
 - Runtime venv/cache is managed automatically under Krita user data, not inside
   plugin source.
+- The torch wheel index is chosen per GPU: `cu128` when `nvidia-smi` reports
+  compute capability >= 10.0 (Blackwell), `cu124` otherwise; the choice is recorded
+  in `runtime.json` and the venv is recreated when it changes. A GPU torch has no
+  kernels for is an `InferenceUnsupportedGpu` error, never a silent CPU fallback.
 - The worker keeps disk caches, but unloads the CUDA BiRefNet model and clears
   PyTorch CUDA allocator cache after each lasso job to avoid VRAM buildup in
   Krita.

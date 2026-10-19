@@ -63,8 +63,13 @@ Diagnostics do not run inference and must not inspect image data.
 {"id":2,"method":"cancel","params":{"job_id":1}}
 ```
 
-Cancellation is responsive during runtime/model setup and stale-safe during GPU
-inference.
+Cancellation is responsive during runtime setup: the pip/venv subprocess is
+stopped (on Windows with its whole process tree) and the job ends with a
+`RuntimeBootstrapError` (`runtime setup cancelled`) that clients ignore as stale.
+It is not responsive during the model download (an in-process Hugging Face call that
+cannot be interrupted; the job stops when the download returns) and stale-safe during
+GPU inference. The worker answers the `cancel` request itself immediately with
+`{"cancelled":true}`.
 
 ## Progress
 
@@ -133,7 +138,9 @@ Expected user-safe error types:
 - `ModelVerificationError`
 - `UnknownModel`
 - `InferenceOutOfMemory`
-- `InferenceFailed`
+- `InferenceUnsupportedGpu` (the installed PyTorch has no kernels for the GPU; the
+  message names the GPU and capability)
+- `InferenceFailed` (the message names the device and the exception class)
 - `EmptyRegion`
 - `EmptySelection`
 - `WorkerBusy`

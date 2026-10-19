@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import NoReturn
@@ -55,7 +56,7 @@ def main() -> NoReturn:
         )
         # On Windows there is no python3, use python or sys.executable
         python_bin = shutil.which("python3") or shutil.which("python") or sys.executable
-        os.execvp(python_bin, [python_bin, *sys.argv[1:]])
+        _run([python_bin, *sys.argv[1:]], os.environ.copy())
 
     print(
         format_log_event(
@@ -69,9 +70,11 @@ def main() -> NoReturn:
         flush=True,
     )
     env = os.environ.copy()
+    if sys.platform.startswith("win"):
+        # Worker stdio is UTF-8 JSON; the Windows default is the ANSI code page.
+        env.setdefault("PYTHONUTF8", "1")
     _configure_cuda_environment(env)
-    os.execvpe(
-        uv,
+    _run(
         [
             uv,
             "run",
@@ -83,7 +86,16 @@ def main() -> NoReturn:
         ],
         env,
     )
-    raise SystemExit(127)
+
+
+def _run(argv: list[str], env: dict[str, str]) -> NoReturn:
+    if sys.platform.startswith("win"):
+        # os.exec* starts a new process and exits this one on Windows, so the
+        # parent (QProcess) would see the worker finish immediately. Keep this
+        # process as the parent with inherited stdio and forward the exit code.
+        raise SystemExit(subprocess.call(argv, env=env))
+    else:
+        os.execvpe(argv[0], argv, env)
 
 
 def _configure_cuda_environment(env: dict[str, str]) -> None:
@@ -149,9 +161,10 @@ def _is_cuda_home(path: Path) -> bool:
         return (path / "bin" / "nvcc.exe").exists() and (
             (path / "lib" / "x64").exists() or (path / "lib").exists()
         )
-    return (path / "bin" / "nvcc").exists() and (
-        (path / "lib64").exists() or (path / "lib").exists()
-    )
+    else:
+        return (path / "bin" / "nvcc").exists() and (
+            (path / "lib64").exists() or (path / "lib").exists()
+        )
 
 
 def _prepend_env_path(prefix: str, current: str) -> str:
